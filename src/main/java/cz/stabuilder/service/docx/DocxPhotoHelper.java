@@ -94,8 +94,9 @@ public class DocxPhotoHelper {
             String lower = filename.toLowerCase();
             int picType = lower.endsWith(".png") ? XWPFDocument.PICTURE_TYPE_PNG : XWPFDocument.PICTURE_TYPE_JPEG;
 
+            // Explicitní přetypování na int řeší chybu kompilace
             run.addPicture(new ByteArrayInputStream(imageBytes), picType, filename,
-                    targetWidthEmu, targetHeightEmu);
+                    (int) targetWidthEmu, (int) targetHeightEmu);
 
         } catch (Exception e) {
             cell.setText("[Fotka: " + filename + "]");

@@ -1,4 +1,4 @@
-FOLDER DUMP - 2026-03-23 10:32:16.236942
+FOLDER DUMP - 2026-03-23 10:55:16.997421
 ================================================================================
 
 DIRECTORY TREE
@@ -25,22 +25,28 @@ ROOT: /Users/jirka/Downloads/halgy app/sta-builder
               [F] StaProject.java
               [F] Subject.java
             [D] src/main/java/cz/stabuilder/service
-              [F] DocxContentBuilder.java
               [F] DocxExportService.java
-              [F] DocxPhotoHelper.java
-              [F] DocxStyleHelper.java
-              [F] DocxTableBuilder.java
               [F] PdfExportService.java
               [F] PhotoService.java
               [F] ProjectService.java
               [F] StaService.java
+              [D] src/main/java/cz/stabuilder/service/docx
+                [F] DocxContentBuilder.java
+                [F] DocxPhotoHelper.java
+                [F] DocxStyleHelper.java
+                [F] DocxTableBuilder.java
       [D] src/main/resources
         [F] application.properties
         [D] src/main/resources/static
           [D] src/main/resources/static/css
             [F] style.css
           [D] src/main/resources/static/js
+            [F] api.js
             [F] app.js
+            [F] comparables.js
+            [F] export.js
+            [F] photos.js
+            [F] state.js
         [D] src/main/resources/templates
           [F] index.html
   [D] uploads
@@ -71,26 +77,34 @@ FILE: pom.xml
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Thymeleaf (optional, we use static HTML mostly) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
 
-        <!-- Apache POI for DOCX generation -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml-full</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>5.2.5</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.poi</groupId>
+                    <artifactId>poi-ooxml-lite</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
-        <!-- iText 7 for PDF export -->
         <dependency>
             <groupId>com.itextpdf</groupId>
             <artifactId>itext7-core</artifactId>
@@ -98,20 +112,17 @@ FILE: pom.xml
             <type>pom</type>
         </dependency>
 
-        <!-- Jackson for JSON -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
-        <!-- Lombok (optional, reduces boilerplate) -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
 
-        <!-- Dev tools -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
@@ -119,7 +130,6 @@ FILE: pom.xml
             <optional>true</optional>
         </dependency>
 
-        <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -913,319 +923,6 @@ public class Subject {
 }
 --------------------------------------------------------------------------------
 
-FILE: src/main/java/cz/stabuilder/service/DocxContentBuilder.java
-----------------------------------------
-package cz.stabuilder.service.docx;
-
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.Pricing;
-import cz.stabuilder.model.StaProject;
-import cz.stabuilder.model.Subject;
-import org.apache.poi.xwpf.usermodel.*;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTRPr;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTShd;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STShd;
-
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-
-import static cz.stabuilder.service.docx.DocxStyleHelper.*;
-
-/**
- * Generuje obsahové sekce DOCX: titulní stranu, srovnatelné nemovitosti,
- * cenové doporučení a patičku s kontaktem.
- */
-public class DocxContentBuilder {
-
-    private final DocxPhotoHelper photoHelper;
-
-    public DocxContentBuilder(DocxPhotoHelper photoHelper) {
-        this.photoHelper = photoHelper;
-    }
-
-    // ==================== TITLE PAGE ====================
-
-    public void addTitlePage(XWPFDocument doc, StaProject project) {
-        Subject subject = project.getSubject();
-
-        addEmptyLines(doc, 2);
-
-        // Hlavní nadpis
-        XWPFParagraph titleP = doc.createParagraph();
-        titleP.setAlignment(ParagraphAlignment.CENTER);
-        titleP.setSpacingAfter(400);
-        addStyledRun(titleP, "SROVNÁVACÍ TRŽNÍ ANALÝZA", 28, true, COLOR_PRIMARY);
-
-        // Datum
-        if (subject.getDate() != null) {
-            XWPFParagraph dateP = doc.createParagraph();
-            dateP.setAlignment(ParagraphAlignment.CENTER);
-            dateP.setSpacingAfter(400);
-            addStyledRun(dateP, subject.getDate().format(DateTimeFormatter.ofPattern("d.M.yyyy")), 14, true, null);
-        }
-
-        // Klient
-        addLabelValue(doc, "Vypracováno pro: ", safe(subject.getClientName()), 12);
-
-        // Předmět prodeje
-        addLabelValue(doc, "Předmět prodeje: ", buildSubjectLine(subject), 11);
-
-        // Adresa
-        addLabelValue(doc, "Adresa: ", safe(subject.getAddress()), 11);
-
-        addEmptyLines(doc, 1);
-
-        // Popis nemovitosti
-        if (subject.getDescription() != null && !subject.getDescription().isBlank()) {
-            addSubHeading(doc, "Popis nemovitosti:");
-            for (String line : subject.getDescription().split("\n")) {
-                if (!line.isBlank()) {
-                    XWPFParagraph p = doc.createParagraph();
-                    p.setSpacingAfter(60);
-                    addStyledRun(p, line.trim(), 10, false, COLOR_GRAY);
-                }
-            }
-        }
-    }
-
-    // ==================== SUBJECT PHOTOS ====================
-
-    public void addSubjectPhotosPage(XWPFDocument doc, Subject subject) {
-        addSubHeading(doc, "Fotky pracovní");
-        photoHelper.addPhotoGrid(doc, subject.getPhotoFilenames());
-    }
-
-    // ==================== COMPARABLE SECTION ====================
-
-    public void addComparableSection(XWPFDocument doc, ComparableProperty comp, boolean isSold) {
-        // Nadpis
-        String heading = String.format("Byt %s, %s m², ul. %s, %s – %s",
-                safe(comp.getDisposition()), comp.getArea(),
-                safe(comp.getStreet()), safe(comp.getCity()), safe(comp.getDistrict()));
-
-        XWPFParagraph headP = doc.createParagraph();
-        headP.setSpacingBefore(200);
-        headP.setSpacingAfter(100);
-        addStyledRun(headP, heading, 13, true, COLOR_PRIMARY);
-
-        // Cena
-        String priceText;
-        if (isSold) {
-            priceText = "Prodáno za " + comp.getFormattedPrice();
-            if (comp.getSoldDate() != null && !comp.getSoldDate().isBlank())
-                priceText += " v " + comp.getSoldDate();
-            if (comp.getSoldDuration() != null && !comp.getSoldDuration().isBlank())
-                priceText += " za " + comp.getSoldDuration();
-        } else {
-            priceText = comp.getFormattedPrice();
-        }
-
-        XWPFParagraph priceP = doc.createParagraph();
-        priceP.setSpacingAfter(200);
-        addStyledRun(priceP, priceText, 14, true, isSold ? COLOR_GREEN : COLOR_ACCENT);
-
-        // Fotky
-        if (!comp.getPhotoFilenames().isEmpty()) {
-            photoHelper.addPhotoGrid(doc, comp.getPhotoFilenames());
-        }
-
-        // Popis se zvýrazněním
-        if (comp.getDescriptionText() != null && !comp.getDescriptionText().isBlank()) {
-            addDescriptionWithHighlights(doc, comp.getDescriptionText(), comp.getHighlights());
-        }
-
-        // Zpětná vazba
-        if (comp.getBrokerFeedback() != null && !comp.getBrokerFeedback().isBlank()) {
-            addEmptyLines(doc, 1);
-            XWPFParagraph fbP = doc.createParagraph();
-            fbP.setSpacingBefore(120);
-
-            XWPFRun labelRun = addStyledRun(fbP, "Zpětná vazba od makléře: ", 10, true, null);
-            labelRun.setUnderline(UnderlinePatterns.SINGLE);
-
-            XWPFRun textRun = addStyledRun(fbP, comp.getBrokerFeedback(), 10, false, COLOR_GRAY);
-            textRun.setItalic(true);
-        }
-    }
-
-    // ==================== PRICING PAGE ====================
-
-    public void addPricingPage(XWPFDocument doc, StaProject project) {
-        Pricing pricing = project.getPricing();
-
-        addSectionHeading(doc, "Návrh pásma prodejní ceny Vaší nemovitosti");
-
-        // Klady
-        List<String> positives = pricing.getPositivesList();
-        if (!positives.isEmpty()) {
-            addSubHeading(doc, "Kladné stránky nemovitosti:");
-            positives.forEach(item -> addBulletItem(doc, item));
-        }
-
-        // Zápory
-        List<String> negatives = pricing.getNegativesList();
-        if (!negatives.isEmpty()) {
-            addEmptyLines(doc, 1);
-            addSubHeading(doc, "Záporné stránky nemovitosti:");
-            negatives.forEach(item -> addBulletItem(doc, item));
-        }
-
-        // Doporučení
-        if (pricing.getRecommendation() != null && !pricing.getRecommendation().isBlank()) {
-            addEmptyLines(doc, 1);
-            addSubHeading(doc, "Doporučení:");
-            addBulletItem(doc, pricing.getRecommendation());
-        }
-
-        addEmptyLines(doc, 1);
-
-        // Úvodní text
-        XWPFParagraph introP = doc.createParagraph();
-        introP.setSpacingAfter(100);
-        addStyledRun(introP, "Vzhledem k výše uvedeným skutečnostem a nabídkám v dané lokalitě "
-                + "doporučuji cenové rozmezí pro prodej Vaší nemovitosti", 11, false, null);
-
-        // Cenové rozmezí
-        String range = pricing.getFormattedRange();
-        if (!range.isBlank()) {
-            XWPFParagraph rangeP = doc.createParagraph();
-            rangeP.setAlignment(ParagraphAlignment.CENTER);
-            rangeP.setSpacingBefore(200);
-            rangeP.setSpacingAfter(200);
-            addStyledRun(rangeP, range, 16, true, COLOR_PRIMARY);
-        }
-
-        // Počáteční cena
-        if (pricing.getStartPrice() > 0) {
-            XWPFParagraph startP = doc.createParagraph();
-            startP.setSpacingBefore(100);
-            addStyledRun(startP, "Jako ", 11, false, null);
-
-            XWPFRun boldRun = addStyledRun(startP,
-                    "počáteční prodejní cenu navrhuji začít s cenou " + pricing.getFormattedStartPrice(),
-                    11, true, null);
-            boldRun.setUnderline(UnderlinePatterns.SINGLE);
-
-            addStyledRun(startP, " s případným postupným upravováním.", 11, false, null);
-        }
-    }
-
-    // ==================== AGENT FOOTER ====================
-
-    public void addAgentFooter(XWPFDocument doc, StaProject project) {
-        addEmptyLines(doc, 2);
-
-        XWPFParagraph labelP = doc.createParagraph();
-        XWPFRun labelRun = addStyledRun(labelP, "Vypracoval", 10, false, COLOR_GRAY);
-        labelRun.setItalic(true);
-
-        addEmptyLines(doc, 1);
-
-        // Kontaktní tabulka
-        XWPFTable footerTable = doc.createTable(1, 2);
-        footerTable.setWidth(CONTENT_WIDTH + "");
-        setTableBordersNone(footerTable);
-
-        XWPFTableRow row = footerTable.getRow(0);
-
-        // Levý sloupec — kontakt
-        XWPFTableCell leftCell = row.getCell(0);
-        setCellWidth(leftCell, CONTENT_WIDTH / 2);
-
-        addContactLine(leftCell.getParagraphArray(0), safe(project.getAgentName()), true, 12, COLOR_BLACK);
-        addContactLine(leftCell.addParagraph(), safe(project.getAgentTitle()), false, 10, COLOR_GRAY);
-        addContactLine(leftCell.addParagraph(), "M: " + safe(project.getAgentPhone()), false, 9, COLOR_GRAY);
-        addContactLine(leftCell.addParagraph(), "E: " + safe(project.getAgentEmail()), false, 9, COLOR_GRAY);
-        addContactLine(leftCell.addParagraph(), safe(project.getAgencyName()), true, 10, COLOR_BLACK);
-        addContactLine(leftCell.addParagraph(), safe(project.getAgencyAddress()), false, 8, COLOR_GRAY);
-        addContactLine(leftCell.addParagraph(), safe(project.getAgentWebsite()), false, 9, COLOR_PRIMARY);
-
-        // Pravý sloupec — logo placeholder
-        XWPFTableCell rightCell = row.getCell(1);
-        setCellWidth(rightCell, CONTENT_WIDTH / 2);
-        XWPFParagraph logoP = rightCell.getParagraphArray(0);
-        if (logoP == null) logoP = rightCell.addParagraph();
-        logoP.setAlignment(ParagraphAlignment.RIGHT);
-        XWPFRun logoRun = addStyledRun(logoP, "[Logo placeholder]", 9, false, COLOR_GRAY);
-        logoRun.setItalic(true);
-    }
-
-    // ==================== PRIVATE HELPERS ====================
-
-    private void addDescriptionWithHighlights(XWPFDocument doc, String text, List<String> highlights) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(100);
-        p.setSpacingAfter(100);
-
-        if (highlights == null || highlights.isEmpty()) {
-            addStyledRun(p, text, 9, false, COLOR_GRAY);
-            return;
-        }
-
-        String remaining = text;
-        for (String highlight : highlights) {
-            if (highlight == null || highlight.isBlank()) continue;
-            int idx = remaining.toLowerCase().indexOf(highlight.toLowerCase());
-            if (idx >= 0) {
-                if (idx > 0) {
-                    addStyledRun(p, remaining.substring(0, idx), 9, false, COLOR_GRAY);
-                }
-                XWPFRun hlRun = addStyledRun(p, remaining.substring(idx, idx + highlight.length()), 9, true, COLOR_BLACK);
-                setRunHighlight(hlRun, COLOR_HIGHLIGHT);
-                remaining = remaining.substring(idx + highlight.length());
-            }
-        }
-        if (!remaining.isEmpty()) {
-            addStyledRun(p, remaining, 9, false, COLOR_GRAY);
-        }
-    }
-
-    private String buildSubjectLine(Subject s) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("byt ").append(safe(s.getDisposition()));
-        if (s.getOwnership() != null && !s.getOwnership().isBlank()) sb.append(", ").append(s.getOwnership());
-        if (s.getAreaSqm() > 0) sb.append(", ").append(s.getAreaSqm()).append(" m²");
-        if (s.getExtras() != null && !s.getExtras().isBlank()) sb.append(" + ").append(s.getExtras());
-        return sb.toString();
-    }
-
-    private void addSectionHeading(XWPFDocument doc, String text) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(200);
-        p.setSpacingAfter(200);
-        p.setBorderBottom(Borders.SINGLE);
-        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
-    }
-
-    private void addSubHeading(XWPFDocument doc, String text) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(120);
-        p.setSpacingAfter(80);
-        XWPFRun run = addStyledRun(p, text, 11, true, null);
-        run.setUnderline(UnderlinePatterns.SINGLE);
-    }
-
-    private void addLabelValue(XWPFDocument doc, String label, String value, int fontSize) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingAfter(80);
-        addStyledRun(p, label, fontSize, true, null);
-        addStyledRun(p, value, fontSize, false, null);
-    }
-
-    private void addBulletItem(XWPFDocument doc, String text) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setIndentationLeft(720);
-        p.setSpacingAfter(40);
-        addStyledRun(p, "•  " + text, 10, false, null);
-    }
-
-    private void addContactLine(XWPFParagraph p, String text, boolean bold, int size, String color) {
-        if (p == null) return;
-        addStyledRun(p, text, size, bold, color);
-    }
-}
---------------------------------------------------------------------------------
-
 FILE: src/main/java/cz/stabuilder/service/DocxExportService.java
 ----------------------------------------
 package cz.stabuilder.service;
@@ -1323,464 +1020,6 @@ public class DocxExportService {
         p.setSpacingAfter(200);
         p.setBorderBottom(org.apache.poi.xwpf.usermodel.Borders.SINGLE);
         DocxStyleHelper.addStyledRun(p, text, 16, true, DocxStyleHelper.COLOR_PRIMARY);
-    }
-}
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/DocxPhotoHelper.java
-----------------------------------------
-package cz.stabuilder.service.docx;
-
-import cz.stabuilder.service.PhotoService;
-import org.apache.poi.xwpf.usermodel.*;
-
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.util.List;
-
-import static cz.stabuilder.service.docx.DocxStyleHelper.*;
-
-/**
- * Vkládání fotek do DOCX — grid 3×2 s automatickým škálováním.
- */
-public class DocxPhotoHelper {
-
-    private final PhotoService photoService;
-
-    public DocxPhotoHelper(PhotoService photoService) {
-        this.photoService = photoService;
-    }
-
-    /**
-     * Přidá grid fotek (3 sloupce) do dokumentu.
-     */
-    public void addPhotoGrid(XWPFDocument doc, List<String> filenames) {
-        if (filenames.isEmpty()) return;
-
-        int cols = 3;
-        int colWidthDxa = CONTENT_WIDTH / cols;
-
-        for (int rowStart = 0; rowStart < filenames.size(); rowStart += cols) {
-            int rowEnd = Math.min(rowStart + cols, filenames.size());
-            int cellCount = rowEnd - rowStart;
-
-            XWPFTable photoTable = doc.createTable(1, cols);
-            photoTable.setWidth(CONTENT_WIDTH + "");
-            setTableBordersNone(photoTable);
-
-            XWPFTableRow row = photoTable.getRow(0);
-
-            for (int i = 0; i < cols; i++) {
-                XWPFTableCell cell = row.getCell(i);
-                setCellWidth(cell, colWidthDxa);
-                setCellMargins(cell, 40, 40, 40, 40);
-
-                if (i < cellCount) {
-                    addPhotoToCell(cell, filenames.get(rowStart + i), colWidthDxa - 120);
-                } else {
-                    cell.setText("");
-                }
-            }
-
-            // Spacing po tabulce
-            XWPFParagraph spacer = doc.createParagraph();
-            spacer.setSpacingAfter(40);
-        }
-    }
-
-    /**
-     * Vloží fotku do buňky tabulky se správným škálováním.
-     */
-    private void addPhotoToCell(XWPFTableCell cell, String filename, int maxWidthDxa) {
-        try {
-            byte[] imageBytes = photoService.getPhotoBytes(filename);
-
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageBytes));
-            if (img == null) {
-                cell.setText("[" + filename + "]");
-                return;
-            }
-
-            int imgW = img.getWidth();
-            int imgH = img.getHeight();
-
-            // 1 DXA = 635 EMU
-            long maxWidthEmu = (long) maxWidthDxa * 635;
-            long targetWidthEmu = maxWidthEmu;
-            long targetHeightEmu = (long) ((double) imgH / imgW * targetWidthEmu);
-
-            // Max výška 5cm (1cm = 360000 EMU)
-            long maxHeightEmu = 5 * 360000L;
-            if (targetHeightEmu > maxHeightEmu) {
-                targetHeightEmu = maxHeightEmu;
-                targetWidthEmu = (long) ((double) imgW / imgH * targetHeightEmu);
-            }
-
-            XWPFParagraph p = cell.getParagraphArray(0);
-            if (p == null) p = cell.addParagraph();
-            p.setAlignment(ParagraphAlignment.CENTER);
-            XWPFRun run = p.createRun();
-
-            String lower = filename.toLowerCase();
-            int picType = lower.endsWith(".png") ? XWPFDocument.PICTURE_TYPE_PNG : XWPFDocument.PICTURE_TYPE_JPEG;
-
-            run.addPicture(new ByteArrayInputStream(imageBytes), picType, filename,
-                    targetWidthEmu, targetHeightEmu);
-
-        } catch (Exception e) {
-            cell.setText("[Fotka: " + filename + "]");
-        }
-    }
-}
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/DocxStyleHelper.java
-----------------------------------------
-package cz.stabuilder.service.docx;
-
-import org.apache.poi.xwpf.usermodel.*;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
-
-import java.math.BigInteger;
-
-/**
- * Pomocné metody pro formátování DOCX — barvy, okraje, buňky, fonty.
- */
-public class DocxStyleHelper {
-
-    // Barvy (hex bez #)
-    public static final String COLOR_PRIMARY = "003865";
-    public static final String COLOR_ACCENT = "C8102E";
-    public static final String COLOR_LIGHT_BLUE = "D5E8F0";
-    public static final String COLOR_TABLE_HEADER = "003865";
-    public static final String COLOR_OFFER_BG = "DCE7F5";
-    public static final String COLOR_SOLD_BG = "D5F0D5";
-    public static final String COLOR_HIGHLIGHT = "FFFF99";
-    public static final String COLOR_GRAY = "666666";
-    public static final String COLOR_WHITE = "FFFFFF";
-    public static final String COLOR_BLACK = "000000";
-    public static final String COLOR_GREEN = "2E7D32";
-
-    // Rozměry A4 v DXA
-    public static final int PAGE_WIDTH = 11906;
-    public static final int PAGE_HEIGHT = 16838;
-    public static final int MARGIN = 1134;
-    public static final int CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
-
-    public static final String FONT = "Arial";
-
-    private DocxStyleHelper() {}
-
-    // === Stránka ===
-
-    public static void setupPageLayout(XWPFDocument doc) {
-        CTDocument1 ctDoc = doc.getDocument();
-        CTBody ctBody = ctDoc.getBody();
-        if (ctBody == null) ctBody = ctDoc.addNewBody();
-        CTSectPr sectPr = ctBody.isSetSectPr() ? ctBody.getSectPr() : ctBody.addNewSectPr();
-
-        CTPageSz pgSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
-        pgSz.setW(BigInteger.valueOf(PAGE_WIDTH));
-        pgSz.setH(BigInteger.valueOf(PAGE_HEIGHT));
-
-        CTPageMar pgMar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
-        pgMar.setTop(BigInteger.valueOf(MARGIN));
-        pgMar.setBottom(BigInteger.valueOf(MARGIN));
-        pgMar.setLeft(BigInteger.valueOf(MARGIN));
-        pgMar.setRight(BigInteger.valueOf(MARGIN));
-    }
-
-    // === Buňky tabulky ===
-
-    public static void setCellWidth(XWPFTableCell cell, int widthDxa) {
-        CTTcPr tcPr = getOrCreateTcPr(cell);
-        CTTblWidth w = tcPr.isSetTcW() ? tcPr.getTcW() : tcPr.addNewTcW();
-        w.setType(STTblWidth.DXA);
-        w.setW(BigInteger.valueOf(widthDxa));
-    }
-
-    public static void setCellColor(XWPFTableCell cell, String hexColor) {
-        CTTcPr tcPr = getOrCreateTcPr(cell);
-        CTShd shd = tcPr.isSetShd() ? tcPr.getShd() : tcPr.addNewShd();
-        shd.setVal(STShd.CLEAR);
-        shd.setFill(hexColor);
-    }
-
-    public static void setCellMargins(XWPFTableCell cell, int top, int left, int bottom, int right) {
-        CTTcPr tcPr = getOrCreateTcPr(cell);
-        CTTcMar mar = tcPr.isSetTcMar() ? tcPr.getTcMar() : tcPr.addNewTcMar();
-
-        setMarginValue(mar.isSetTop() ? mar.getTop() : mar.addNewTop(), top);
-        setMarginValue(mar.isSetLeft() ? mar.getLeft() : mar.addNewLeft(), left);
-        setMarginValue(mar.isSetBottom() ? mar.getBottom() : mar.addNewBottom(), bottom);
-        setMarginValue(mar.isSetRight() ? mar.getRight() : mar.addNewRight(), right);
-    }
-
-    // === Okraje tabulky ===
-
-    public static void setTableBordersNone(XWPFTable table) {
-        CTTblBorders borders = getOrCreateTableBorders(table);
-        setBorderNone(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
-        setBorderNone(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
-        setBorderNone(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
-        setBorderNone(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
-        setBorderNone(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
-        setBorderNone(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
-    }
-
-    public static void setTableBordersThin(XWPFTable table) {
-        CTTblBorders borders = getOrCreateTableBorders(table);
-        setBorderThin(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
-        setBorderThin(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
-        setBorderThin(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
-        setBorderThin(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
-        setBorderThin(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
-        setBorderThin(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
-    }
-
-    // === Zvýraznění textu (žluté pozadí) ===
-
-    public static void setRunHighlight(XWPFRun run, String bgColor) {
-        CTRPr rpr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
-        CTShd shd = rpr.isSetShd() ? rpr.getShd() : rpr.addNewShd();
-        shd.setVal(STShd.CLEAR);
-        shd.setFill(bgColor);
-    }
-
-    // === Textové helpery ===
-
-    public static XWPFRun addStyledRun(XWPFParagraph p, String text, int fontSize, boolean bold, String color) {
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setFontSize(fontSize);
-        run.setFontFamily(FONT);
-        run.setBold(bold);
-        if (color != null) run.setColor(color);
-        return run;
-    }
-
-    public static void addPageBreak(XWPFDocument doc) {
-        XWPFParagraph p = doc.createParagraph();
-        p.createRun().addBreak(BreakType.PAGE);
-    }
-
-    public static void addEmptyLines(XWPFDocument doc, int count) {
-        for (int i = 0; i < count; i++) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setSpacingAfter(80);
-        }
-    }
-
-    public static String safe(String s) {
-        return s != null ? s : "";
-    }
-
-    // === Private ===
-
-    private static CTTcPr getOrCreateTcPr(XWPFTableCell cell) {
-        return cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
-    }
-
-    private static CTTblBorders getOrCreateTableBorders(XWPFTable table) {
-        CTTblPr tblPr = table.getCTTbl().getTblPr();
-        if (tblPr == null) tblPr = table.getCTTbl().addNewTblPr();
-        return tblPr.isSetTblBorders() ? tblPr.getTblBorders() : tblPr.addNewTblBorders();
-    }
-
-    private static void setMarginValue(CTTblWidth tw, int value) {
-        tw.setType(STTblWidth.DXA);
-        tw.setW(BigInteger.valueOf(value));
-    }
-
-    private static void setBorderNone(CTBorder border) {
-        border.setVal(STBorder.NONE);
-        border.setSz(BigInteger.ZERO);
-        border.setSpace(BigInteger.ZERO);
-        border.setColor("FFFFFF");
-    }
-
-    private static void setBorderThin(CTBorder border) {
-        border.setVal(STBorder.SINGLE);
-        border.setSz(BigInteger.valueOf(4));
-        border.setSpace(BigInteger.ZERO);
-        border.setColor("CCCCCC");
-    }
-}
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/DocxTableBuilder.java
-----------------------------------------
-package cz.stabuilder.service.docx;
-
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.StaProject;
-import org.apache.poi.xwpf.usermodel.*;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge;
-
-import java.math.BigInteger;
-import java.util.List;
-
-import static cz.stabuilder.service.docx.DocxStyleHelper.*;
-
-/**
- * Generuje srovnávací tabulku nemovitostí v DOCX.
- */
-public class DocxTableBuilder {
-
-    private static final int[] COL_WIDTHS = {2800, 2000, 1800, 3038};
-
-    private DocxTableBuilder() {}
-
-    /**
-     * Přidá kompletní srovnávací tabulku do dokumentu.
-     */
-    public static void addComparisonTable(XWPFDocument doc, StaProject project) {
-        addSectionHeading(doc, "Nabízené / prodané byty – srovnání");
-
-        // Podnadpis
-        XWPFParagraph subP = doc.createParagraph();
-        subP.setSpacingAfter(200);
-        XWPFRun subRun = subP.createRun();
-        subRun.setText("Porovnatelné panelové byty v lokalitě " + safe(project.getSubject().getAddress()));
-        subRun.setFontSize(10);
-        subRun.setFontFamily(FONT);
-        subRun.setColor(COLOR_GRAY);
-        subRun.setItalic(true);
-
-        List<ComparableProperty> offers = project.getOffers();
-        List<ComparableProperty> sold = project.getSold();
-
-        int totalRows = 1;
-        if (!offers.isEmpty()) totalRows += 1 + offers.size();
-        if (!sold.isEmpty()) totalRows += 1 + sold.size();
-
-        XWPFTable table = doc.createTable(totalRows, 4);
-        table.setWidth(CONTENT_WIDTH + "");
-
-        addHeaderRow(table);
-
-        int row = 1;
-        if (!offers.isEmpty()) {
-            addCategoryRow(table, row, "Nabídka", COLOR_OFFER_BG);
-            row++;
-            for (ComparableProperty c : offers) {
-                addDataRow(table, row, c, false);
-                row++;
-            }
-        }
-        if (!sold.isEmpty()) {
-            addCategoryRow(table, row, "Prodáno", COLOR_SOLD_BG);
-            row++;
-            for (ComparableProperty c : sold) {
-                addDataRow(table, row, c, true);
-                row++;
-            }
-        }
-
-        setTableBordersThin(table);
-    }
-
-    // === Header ===
-
-    private static void addHeaderRow(XWPFTable table) {
-        XWPFTableRow headerRow = table.getRow(0);
-        String[] headers = {"Lokalita", "Prodejní cena", "Cena za m²", "Výhody / Nevýhody"};
-        for (int i = 0; i < 4; i++) {
-            XWPFTableCell cell = headerRow.getCell(i);
-            setCellWidth(cell, COL_WIDTHS[i]);
-            setCellColor(cell, COLOR_TABLE_HEADER);
-            setCellMargins(cell, 60, 80, 60, 80);
-
-            XWPFParagraph p = cell.getParagraphArray(0);
-            if (p == null) p = cell.addParagraph();
-            addStyledRun(p, headers[i], 9, true, COLOR_WHITE);
-        }
-    }
-
-    // === Category row (Nabídka / Prodáno) ===
-
-    private static void addCategoryRow(XWPFTable table, int rowIdx, String label, String bgColor) {
-        XWPFTableRow row = table.getRow(rowIdx);
-        for (int i = 0; i < 4; i++) {
-            XWPFTableCell cell = row.getCell(i);
-            setCellWidth(cell, COL_WIDTHS[i]);
-            setCellColor(cell, bgColor);
-            setCellMargins(cell, 40, 60, 40, 60);
-
-            CTTcPr tcPr = cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
-            if (i == 0) {
-                tcPr.addNewGridSpan().setVal(BigInteger.valueOf(4));
-                XWPFParagraph p = cell.getParagraphArray(0);
-                if (p == null) p = cell.addParagraph();
-                addStyledRun(p, label, 9, true, COLOR_PRIMARY);
-            } else {
-                tcPr.addNewHMerge().setVal(STMerge.CONTINUE);
-            }
-        }
-    }
-
-    // === Data row ===
-
-    private static void addDataRow(XWPFTable table, int rowIdx, ComparableProperty c, boolean isSold) {
-        XWPFTableRow row = table.getRow(rowIdx);
-
-        for (int i = 0; i < 4; i++) {
-            XWPFTableCell cell = row.getCell(i);
-            setCellWidth(cell, COL_WIDTHS[i]);
-            setCellMargins(cell, 40, 60, 40, 60);
-
-            XWPFParagraph p = cell.getParagraphArray(0);
-            if (p == null) p = cell.addParagraph();
-
-            switch (i) {
-                case 0 -> addLocalityCell(p, c);
-                case 1 -> addStyledRun(p, c.getFormattedPrice(), 9, true, null);
-                case 2 -> addStyledRun(p, c.getFormattedPricePerSqm(), 9, true, null);
-                case 3 -> addDetailsCell(p, c, isSold);
-            }
-        }
-    }
-
-    private static void addLocalityCell(XWPFParagraph p, ComparableProperty c) {
-        XWPFRun streetRun = addStyledRun(p, safe(c.getStreet()) + ",", 9, true, null);
-        streetRun.addBreak();
-        addStyledRun(p, safe(c.getDisposition()) + ", " + c.getArea() + " m²", 8, false, COLOR_GRAY);
-    }
-
-    private static void addDetailsCell(XWPFParagraph p, ComparableProperty c, boolean isSold) {
-        StringBuilder details = new StringBuilder();
-        if (c.getFloor() != null && !c.getFloor().isBlank()) details.append(c.getFloor());
-        if (c.getExtras() != null && !c.getExtras().isBlank()) {
-            if (!details.isEmpty()) details.append(", ");
-            details.append(c.getExtras());
-        }
-        if (c.getCondition() != null && !c.getCondition().isBlank()) {
-            if (!details.isEmpty()) details.append(", ");
-            details.append(c.getCondition());
-        }
-
-        addStyledRun(p, details.toString(), 8, false, null);
-
-        if (isSold && c.getSoldDate() != null && !c.getSoldDate().isBlank()) {
-            p.createRun().addBreak();
-            String soldText = "Prodáno v " + c.getSoldDate();
-            if (c.getSoldDuration() != null && !c.getSoldDuration().isBlank()) {
-                soldText += " za " + c.getSoldDuration();
-            }
-            addStyledRun(p, soldText, 8, true, COLOR_GREEN);
-        }
-    }
-
-    // === Section heading ===
-
-    private static void addSectionHeading(XWPFDocument doc, String text) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(200);
-        p.setSpacingAfter(200);
-        p.setBorderBottom(Borders.SINGLE);
-        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
     }
 }
 --------------------------------------------------------------------------------
@@ -2533,6 +1772,780 @@ public class StaService {
 
 --------------------------------------------------------------------------------
 
+FILE: src/main/java/cz/stabuilder/service/docx/DocxContentBuilder.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.Pricing;
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.model.Subject;
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTRPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTShd;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STShd;
+
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Generuje obsahové sekce DOCX: titulní stranu, srovnatelné nemovitosti,
+ * cenové doporučení a patičku s kontaktem.
+ */
+public class DocxContentBuilder {
+
+    private final DocxPhotoHelper photoHelper;
+
+    public DocxContentBuilder(DocxPhotoHelper photoHelper) {
+        this.photoHelper = photoHelper;
+    }
+
+    // ==================== TITLE PAGE ====================
+
+    public void addTitlePage(XWPFDocument doc, StaProject project) {
+        Subject subject = project.getSubject();
+
+        addEmptyLines(doc, 2);
+
+        // Hlavní nadpis
+        XWPFParagraph titleP = doc.createParagraph();
+        titleP.setAlignment(ParagraphAlignment.CENTER);
+        titleP.setSpacingAfter(400);
+        addStyledRun(titleP, "SROVNÁVACÍ TRŽNÍ ANALÝZA", 28, true, COLOR_PRIMARY);
+
+        // Datum
+        if (subject.getDate() != null) {
+            XWPFParagraph dateP = doc.createParagraph();
+            dateP.setAlignment(ParagraphAlignment.CENTER);
+            dateP.setSpacingAfter(400);
+            addStyledRun(dateP, subject.getDate().format(DateTimeFormatter.ofPattern("d.M.yyyy")), 14, true, null);
+        }
+
+        // Klient
+        addLabelValue(doc, "Vypracováno pro: ", safe(subject.getClientName()), 12);
+
+        // Předmět prodeje
+        addLabelValue(doc, "Předmět prodeje: ", buildSubjectLine(subject), 11);
+
+        // Adresa
+        addLabelValue(doc, "Adresa: ", safe(subject.getAddress()), 11);
+
+        addEmptyLines(doc, 1);
+
+        // Popis nemovitosti
+        if (subject.getDescription() != null && !subject.getDescription().isBlank()) {
+            addSubHeading(doc, "Popis nemovitosti:");
+            for (String line : subject.getDescription().split("\n")) {
+                if (!line.isBlank()) {
+                    XWPFParagraph p = doc.createParagraph();
+                    p.setSpacingAfter(60);
+                    addStyledRun(p, line.trim(), 10, false, COLOR_GRAY);
+                }
+            }
+        }
+    }
+
+    // ==================== SUBJECT PHOTOS ====================
+
+    public void addSubjectPhotosPage(XWPFDocument doc, Subject subject) {
+        addSubHeading(doc, "Fotky pracovní");
+        photoHelper.addPhotoGrid(doc, subject.getPhotoFilenames());
+    }
+
+    // ==================== COMPARABLE SECTION ====================
+
+    public void addComparableSection(XWPFDocument doc, ComparableProperty comp, boolean isSold) {
+        // Nadpis
+        String heading = String.format("Byt %s, %s m², ul. %s, %s – %s",
+                safe(comp.getDisposition()), comp.getArea(),
+                safe(comp.getStreet()), safe(comp.getCity()), safe(comp.getDistrict()));
+
+        XWPFParagraph headP = doc.createParagraph();
+        headP.setSpacingBefore(200);
+        headP.setSpacingAfter(100);
+        addStyledRun(headP, heading, 13, true, COLOR_PRIMARY);
+
+        // Cena
+        String priceText;
+        if (isSold) {
+            priceText = "Prodáno za " + comp.getFormattedPrice();
+            if (comp.getSoldDate() != null && !comp.getSoldDate().isBlank())
+                priceText += " v " + comp.getSoldDate();
+            if (comp.getSoldDuration() != null && !comp.getSoldDuration().isBlank())
+                priceText += " za " + comp.getSoldDuration();
+        } else {
+            priceText = comp.getFormattedPrice();
+        }
+
+        XWPFParagraph priceP = doc.createParagraph();
+        priceP.setSpacingAfter(200);
+        addStyledRun(priceP, priceText, 14, true, isSold ? COLOR_GREEN : COLOR_ACCENT);
+
+        // Fotky
+        if (!comp.getPhotoFilenames().isEmpty()) {
+            photoHelper.addPhotoGrid(doc, comp.getPhotoFilenames());
+        }
+
+        // Popis se zvýrazněním
+        if (comp.getDescriptionText() != null && !comp.getDescriptionText().isBlank()) {
+            addDescriptionWithHighlights(doc, comp.getDescriptionText(), comp.getHighlights());
+        }
+
+        // Zpětná vazba
+        if (comp.getBrokerFeedback() != null && !comp.getBrokerFeedback().isBlank()) {
+            addEmptyLines(doc, 1);
+            XWPFParagraph fbP = doc.createParagraph();
+            fbP.setSpacingBefore(120);
+
+            XWPFRun labelRun = addStyledRun(fbP, "Zpětná vazba od makléře: ", 10, true, null);
+            labelRun.setUnderline(UnderlinePatterns.SINGLE);
+
+            XWPFRun textRun = addStyledRun(fbP, comp.getBrokerFeedback(), 10, false, COLOR_GRAY);
+            textRun.setItalic(true);
+        }
+    }
+
+    // ==================== PRICING PAGE ====================
+
+    public void addPricingPage(XWPFDocument doc, StaProject project) {
+        Pricing pricing = project.getPricing();
+
+        addSectionHeading(doc, "Návrh pásma prodejní ceny Vaší nemovitosti");
+
+        // Klady
+        List<String> positives = pricing.getPositivesList();
+        if (!positives.isEmpty()) {
+            addSubHeading(doc, "Kladné stránky nemovitosti:");
+            positives.forEach(item -> addBulletItem(doc, item));
+        }
+
+        // Zápory
+        List<String> negatives = pricing.getNegativesList();
+        if (!negatives.isEmpty()) {
+            addEmptyLines(doc, 1);
+            addSubHeading(doc, "Záporné stránky nemovitosti:");
+            negatives.forEach(item -> addBulletItem(doc, item));
+        }
+
+        // Doporučení
+        if (pricing.getRecommendation() != null && !pricing.getRecommendation().isBlank()) {
+            addEmptyLines(doc, 1);
+            addSubHeading(doc, "Doporučení:");
+            addBulletItem(doc, pricing.getRecommendation());
+        }
+
+        addEmptyLines(doc, 1);
+
+        // Úvodní text
+        XWPFParagraph introP = doc.createParagraph();
+        introP.setSpacingAfter(100);
+        addStyledRun(introP, "Vzhledem k výše uvedeným skutečnostem a nabídkám v dané lokalitě "
+                + "doporučuji cenové rozmezí pro prodej Vaší nemovitosti", 11, false, null);
+
+        // Cenové rozmezí
+        String range = pricing.getFormattedRange();
+        if (!range.isBlank()) {
+            XWPFParagraph rangeP = doc.createParagraph();
+            rangeP.setAlignment(ParagraphAlignment.CENTER);
+            rangeP.setSpacingBefore(200);
+            rangeP.setSpacingAfter(200);
+            addStyledRun(rangeP, range, 16, true, COLOR_PRIMARY);
+        }
+
+        // Počáteční cena
+        if (pricing.getStartPrice() > 0) {
+            XWPFParagraph startP = doc.createParagraph();
+            startP.setSpacingBefore(100);
+            addStyledRun(startP, "Jako ", 11, false, null);
+
+            XWPFRun boldRun = addStyledRun(startP,
+                    "počáteční prodejní cenu navrhuji začít s cenou " + pricing.getFormattedStartPrice(),
+                    11, true, null);
+            boldRun.setUnderline(UnderlinePatterns.SINGLE);
+
+            addStyledRun(startP, " s případným postupným upravováním.", 11, false, null);
+        }
+    }
+
+    // ==================== AGENT FOOTER ====================
+
+    public void addAgentFooter(XWPFDocument doc, StaProject project) {
+        addEmptyLines(doc, 2);
+
+        XWPFParagraph labelP = doc.createParagraph();
+        XWPFRun labelRun = addStyledRun(labelP, "Vypracoval", 10, false, COLOR_GRAY);
+        labelRun.setItalic(true);
+
+        addEmptyLines(doc, 1);
+
+        // Kontaktní tabulka
+        XWPFTable footerTable = doc.createTable(1, 2);
+        footerTable.setWidth(CONTENT_WIDTH + "");
+        setTableBordersNone(footerTable);
+
+        XWPFTableRow row = footerTable.getRow(0);
+
+        // Levý sloupec — kontakt
+        XWPFTableCell leftCell = row.getCell(0);
+        setCellWidth(leftCell, CONTENT_WIDTH / 2);
+
+        addContactLine(leftCell.getParagraphArray(0), safe(project.getAgentName()), true, 12, COLOR_BLACK);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgentTitle()), false, 10, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), "M: " + safe(project.getAgentPhone()), false, 9, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), "E: " + safe(project.getAgentEmail()), false, 9, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgencyName()), true, 10, COLOR_BLACK);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgencyAddress()), false, 8, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgentWebsite()), false, 9, COLOR_PRIMARY);
+
+        // Pravý sloupec — logo placeholder
+        XWPFTableCell rightCell = row.getCell(1);
+        setCellWidth(rightCell, CONTENT_WIDTH / 2);
+        XWPFParagraph logoP = rightCell.getParagraphArray(0);
+        if (logoP == null) logoP = rightCell.addParagraph();
+        logoP.setAlignment(ParagraphAlignment.RIGHT);
+        XWPFRun logoRun = addStyledRun(logoP, "[Logo placeholder]", 9, false, COLOR_GRAY);
+        logoRun.setItalic(true);
+    }
+
+    // ==================== PRIVATE HELPERS ====================
+
+    private void addDescriptionWithHighlights(XWPFDocument doc, String text, List<String> highlights) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(100);
+        p.setSpacingAfter(100);
+
+        if (highlights == null || highlights.isEmpty()) {
+            addStyledRun(p, text, 9, false, COLOR_GRAY);
+            return;
+        }
+
+        String remaining = text;
+        for (String highlight : highlights) {
+            if (highlight == null || highlight.isBlank()) continue;
+            int idx = remaining.toLowerCase().indexOf(highlight.toLowerCase());
+            if (idx >= 0) {
+                if (idx > 0) {
+                    addStyledRun(p, remaining.substring(0, idx), 9, false, COLOR_GRAY);
+                }
+                XWPFRun hlRun = addStyledRun(p, remaining.substring(idx, idx + highlight.length()), 9, true, COLOR_BLACK);
+                setRunHighlight(hlRun, COLOR_HIGHLIGHT);
+                remaining = remaining.substring(idx + highlight.length());
+            }
+        }
+        if (!remaining.isEmpty()) {
+            addStyledRun(p, remaining, 9, false, COLOR_GRAY);
+        }
+    }
+
+    private String buildSubjectLine(Subject s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("byt ").append(safe(s.getDisposition()));
+        if (s.getOwnership() != null && !s.getOwnership().isBlank()) sb.append(", ").append(s.getOwnership());
+        if (s.getAreaSqm() > 0) sb.append(", ").append(s.getAreaSqm()).append(" m²");
+        if (s.getExtras() != null && !s.getExtras().isBlank()) sb.append(" + ").append(s.getExtras());
+        return sb.toString();
+    }
+
+    private void addSectionHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(200);
+        p.setSpacingAfter(200);
+        p.setBorderBottom(Borders.SINGLE);
+        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
+    }
+
+    private void addSubHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(120);
+        p.setSpacingAfter(80);
+        XWPFRun run = addStyledRun(p, text, 11, true, null);
+        run.setUnderline(UnderlinePatterns.SINGLE);
+    }
+
+    private void addLabelValue(XWPFDocument doc, String label, String value, int fontSize) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingAfter(80);
+        addStyledRun(p, label, fontSize, true, null);
+        addStyledRun(p, value, fontSize, false, null);
+    }
+
+    private void addBulletItem(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setIndentationLeft(720);
+        p.setSpacingAfter(40);
+        addStyledRun(p, "•  " + text, 10, false, null);
+    }
+
+    private void addContactLine(XWPFParagraph p, String text, boolean bold, int size, String color) {
+        if (p == null) return;
+        addStyledRun(p, text, size, bold, color);
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/docx/DocxPhotoHelper.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.service.PhotoService;
+import org.apache.poi.xwpf.usermodel.*;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Vkládání fotek do DOCX — grid 3×2 s automatickým škálováním.
+ */
+public class DocxPhotoHelper {
+
+    private final PhotoService photoService;
+
+    public DocxPhotoHelper(PhotoService photoService) {
+        this.photoService = photoService;
+    }
+
+    /**
+     * Přidá grid fotek (3 sloupce) do dokumentu.
+     */
+    public void addPhotoGrid(XWPFDocument doc, List<String> filenames) {
+        if (filenames.isEmpty()) return;
+
+        int cols = 3;
+        int colWidthDxa = CONTENT_WIDTH / cols;
+
+        for (int rowStart = 0; rowStart < filenames.size(); rowStart += cols) {
+            int rowEnd = Math.min(rowStart + cols, filenames.size());
+            int cellCount = rowEnd - rowStart;
+
+            XWPFTable photoTable = doc.createTable(1, cols);
+            photoTable.setWidth(CONTENT_WIDTH + "");
+            setTableBordersNone(photoTable);
+
+            XWPFTableRow row = photoTable.getRow(0);
+
+            for (int i = 0; i < cols; i++) {
+                XWPFTableCell cell = row.getCell(i);
+                setCellWidth(cell, colWidthDxa);
+                setCellMargins(cell, 40, 40, 40, 40);
+
+                if (i < cellCount) {
+                    addPhotoToCell(cell, filenames.get(rowStart + i), colWidthDxa - 120);
+                } else {
+                    cell.setText("");
+                }
+            }
+
+            // Spacing po tabulce
+            XWPFParagraph spacer = doc.createParagraph();
+            spacer.setSpacingAfter(40);
+        }
+    }
+
+    /**
+     * Vloží fotku do buňky tabulky se správným škálováním.
+     */
+    private void addPhotoToCell(XWPFTableCell cell, String filename, int maxWidthDxa) {
+        try {
+            byte[] imageBytes = photoService.getPhotoBytes(filename);
+
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageBytes));
+            if (img == null) {
+                cell.setText("[" + filename + "]");
+                return;
+            }
+
+            int imgW = img.getWidth();
+            int imgH = img.getHeight();
+
+            // 1 DXA = 635 EMU
+            long maxWidthEmu = (long) maxWidthDxa * 635;
+            long targetWidthEmu = maxWidthEmu;
+            long targetHeightEmu = (long) ((double) imgH / imgW * targetWidthEmu);
+
+            // Max výška 5cm (1cm = 360000 EMU)
+            long maxHeightEmu = 5 * 360000L;
+            if (targetHeightEmu > maxHeightEmu) {
+                targetHeightEmu = maxHeightEmu;
+                targetWidthEmu = (long) ((double) imgW / imgH * targetHeightEmu);
+            }
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+            p.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun run = p.createRun();
+
+            String lower = filename.toLowerCase();
+            int picType = lower.endsWith(".png") ? XWPFDocument.PICTURE_TYPE_PNG : XWPFDocument.PICTURE_TYPE_JPEG;
+
+            run.addPicture(new ByteArrayInputStream(imageBytes), picType, filename,
+                    targetWidthEmu, targetHeightEmu);
+
+        } catch (Exception e) {
+            cell.setText("[Fotka: " + filename + "]");
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/docx/DocxStyleHelper.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
+
+import java.math.BigInteger;
+
+/**
+ * Pomocné metody pro formátování DOCX — barvy, okraje, buňky, fonty.
+ */
+public class DocxStyleHelper {
+
+    // Barvy (hex bez #)
+    public static final String COLOR_PRIMARY = "003865";
+    public static final String COLOR_ACCENT = "C8102E";
+    public static final String COLOR_LIGHT_BLUE = "D5E8F0";
+    public static final String COLOR_TABLE_HEADER = "003865";
+    public static final String COLOR_OFFER_BG = "DCE7F5";
+    public static final String COLOR_SOLD_BG = "D5F0D5";
+    public static final String COLOR_HIGHLIGHT = "FFFF99";
+    public static final String COLOR_GRAY = "666666";
+    public static final String COLOR_WHITE = "FFFFFF";
+    public static final String COLOR_BLACK = "000000";
+    public static final String COLOR_GREEN = "2E7D32";
+
+    // Rozměry A4 v DXA
+    public static final int PAGE_WIDTH = 11906;
+    public static final int PAGE_HEIGHT = 16838;
+    public static final int MARGIN = 1134;
+    public static final int CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
+
+    public static final String FONT = "Arial";
+
+    private DocxStyleHelper() {}
+
+    // === Stránka ===
+
+    public static void setupPageLayout(XWPFDocument doc) {
+        CTDocument1 ctDoc = doc.getDocument();
+        CTBody ctBody = ctDoc.getBody();
+        if (ctBody == null) ctBody = ctDoc.addNewBody();
+        CTSectPr sectPr = ctBody.isSetSectPr() ? ctBody.getSectPr() : ctBody.addNewSectPr();
+
+        CTPageSz pgSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
+        pgSz.setW(BigInteger.valueOf(PAGE_WIDTH));
+        pgSz.setH(BigInteger.valueOf(PAGE_HEIGHT));
+
+        CTPageMar pgMar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
+        pgMar.setTop(BigInteger.valueOf(MARGIN));
+        pgMar.setBottom(BigInteger.valueOf(MARGIN));
+        pgMar.setLeft(BigInteger.valueOf(MARGIN));
+        pgMar.setRight(BigInteger.valueOf(MARGIN));
+    }
+
+    // === Buňky tabulky ===
+
+    public static void setCellWidth(XWPFTableCell cell, int widthDxa) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTTblWidth w = tcPr.isSetTcW() ? tcPr.getTcW() : tcPr.addNewTcW();
+        w.setType(STTblWidth.DXA);
+        w.setW(BigInteger.valueOf(widthDxa));
+    }
+
+    public static void setCellColor(XWPFTableCell cell, String hexColor) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTShd shd = tcPr.isSetShd() ? tcPr.getShd() : tcPr.addNewShd();
+        shd.setVal(STShd.CLEAR);
+        shd.setFill(hexColor);
+    }
+
+    public static void setCellMargins(XWPFTableCell cell, int top, int left, int bottom, int right) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTTcMar mar = tcPr.isSetTcMar() ? tcPr.getTcMar() : tcPr.addNewTcMar();
+
+        setMarginValue(mar.isSetTop() ? mar.getTop() : mar.addNewTop(), top);
+        setMarginValue(mar.isSetLeft() ? mar.getLeft() : mar.addNewLeft(), left);
+        setMarginValue(mar.isSetBottom() ? mar.getBottom() : mar.addNewBottom(), bottom);
+        setMarginValue(mar.isSetRight() ? mar.getRight() : mar.addNewRight(), right);
+    }
+
+    // === Okraje tabulky ===
+
+    public static void setTableBordersNone(XWPFTable table) {
+        CTTblBorders borders = getOrCreateTableBorders(table);
+        setBorderNone(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
+        setBorderNone(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
+        setBorderNone(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
+        setBorderNone(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
+        setBorderNone(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
+        setBorderNone(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
+    }
+
+    public static void setTableBordersThin(XWPFTable table) {
+        CTTblBorders borders = getOrCreateTableBorders(table);
+        setBorderThin(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
+        setBorderThin(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
+        setBorderThin(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
+        setBorderThin(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
+        setBorderThin(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
+        setBorderThin(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
+    }
+
+    // === Zvýraznění textu (žluté pozadí) ===
+
+    public static void setRunHighlight(XWPFRun run, String bgColor) {
+        CTRPr rpr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
+        CTShd shd = rpr.getShd();
+        if (shd == null) {
+            shd = rpr.addNewShd();
+        }
+        shd.setVal(STShd.CLEAR);
+        shd.setFill(bgColor);
+    }
+
+    // === Textové helpery ===
+
+    public static XWPFRun addStyledRun(XWPFParagraph p, String text, int fontSize, boolean bold, String color) {
+        XWPFRun run = p.createRun();
+        run.setText(text);
+        run.setFontSize(fontSize);
+        run.setFontFamily(FONT);
+        run.setBold(bold);
+        if (color != null) run.setColor(color);
+        return run;
+    }
+
+    public static void addPageBreak(XWPFDocument doc) {
+        XWPFParagraph p = doc.createParagraph();
+        p.createRun().addBreak(BreakType.PAGE);
+    }
+
+    public static void addEmptyLines(XWPFDocument doc, int count) {
+        for (int i = 0; i < count; i++) {
+            XWPFParagraph p = doc.createParagraph();
+            p.setSpacingAfter(80);
+        }
+    }
+
+    public static String safe(String s) {
+        return s != null ? s : "";
+    }
+
+    // === Private ===
+
+    private static CTTcPr getOrCreateTcPr(XWPFTableCell cell) {
+        return cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+    }
+
+    private static CTTblBorders getOrCreateTableBorders(XWPFTable table) {
+        CTTblPr tblPr = table.getCTTbl().getTblPr();
+        if (tblPr == null) tblPr = table.getCTTbl().addNewTblPr();
+        return tblPr.isSetTblBorders() ? tblPr.getTblBorders() : tblPr.addNewTblBorders();
+    }
+
+    private static void setMarginValue(CTTblWidth tw, int value) {
+        tw.setType(STTblWidth.DXA);
+        tw.setW(BigInteger.valueOf(value));
+    }
+
+    private static void setBorderNone(CTBorder border) {
+        border.setVal(STBorder.NONE);
+        border.setSz(BigInteger.ZERO);
+        border.setSpace(BigInteger.ZERO);
+        border.setColor("FFFFFF");
+    }
+
+    private static void setBorderThin(CTBorder border) {
+        border.setVal(STBorder.SINGLE);
+        border.setSz(BigInteger.valueOf(4));
+        border.setSpace(BigInteger.ZERO);
+        border.setColor("CCCCCC");
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/docx/DocxTableBuilder.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.StaProject;
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge;
+
+import java.math.BigInteger;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Generuje srovnávací tabulku nemovitostí v DOCX.
+ */
+public class DocxTableBuilder {
+
+    private static final int[] COL_WIDTHS = {2800, 2000, 1800, 3038};
+
+    private DocxTableBuilder() {}
+
+    /**
+     * Přidá kompletní srovnávací tabulku do dokumentu.
+     */
+    public static void addComparisonTable(XWPFDocument doc, StaProject project) {
+        addSectionHeading(doc, "Nabízené / prodané byty – srovnání");
+
+        // Podnadpis
+        XWPFParagraph subP = doc.createParagraph();
+        subP.setSpacingAfter(200);
+        XWPFRun subRun = subP.createRun();
+        subRun.setText("Porovnatelné panelové byty v lokalitě " + safe(project.getSubject().getAddress()));
+        subRun.setFontSize(10);
+        subRun.setFontFamily(FONT);
+        subRun.setColor(COLOR_GRAY);
+        subRun.setItalic(true);
+
+        List<ComparableProperty> offers = project.getOffers();
+        List<ComparableProperty> sold = project.getSold();
+
+        int totalRows = 1;
+        if (!offers.isEmpty()) totalRows += 1 + offers.size();
+        if (!sold.isEmpty()) totalRows += 1 + sold.size();
+
+        XWPFTable table = doc.createTable(totalRows, 4);
+        table.setWidth(CONTENT_WIDTH + "");
+
+        addHeaderRow(table);
+
+        int row = 1;
+        if (!offers.isEmpty()) {
+            addCategoryRow(table, row, "Nabídka", COLOR_OFFER_BG);
+            row++;
+            for (ComparableProperty c : offers) {
+                addDataRow(table, row, c, false);
+                row++;
+            }
+        }
+        if (!sold.isEmpty()) {
+            addCategoryRow(table, row, "Prodáno", COLOR_SOLD_BG);
+            row++;
+            for (ComparableProperty c : sold) {
+                addDataRow(table, row, c, true);
+                row++;
+            }
+        }
+
+        setTableBordersThin(table);
+    }
+
+    // === Header ===
+
+    private static void addHeaderRow(XWPFTable table) {
+        XWPFTableRow headerRow = table.getRow(0);
+        String[] headers = {"Lokalita", "Prodejní cena", "Cena za m²", "Výhody / Nevýhody"};
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = headerRow.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellColor(cell, COLOR_TABLE_HEADER);
+            setCellMargins(cell, 60, 80, 60, 80);
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+            addStyledRun(p, headers[i], 9, true, COLOR_WHITE);
+        }
+    }
+
+    // === Category row (Nabídka / Prodáno) ===
+
+    private static void addCategoryRow(XWPFTable table, int rowIdx, String label, String bgColor) {
+        XWPFTableRow row = table.getRow(rowIdx);
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = row.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellColor(cell, bgColor);
+            setCellMargins(cell, 40, 60, 40, 60);
+
+            CTTcPr tcPr = cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+            if (i == 0) {
+                tcPr.addNewGridSpan().setVal(BigInteger.valueOf(4));
+                XWPFParagraph p = cell.getParagraphArray(0);
+                if (p == null) p = cell.addParagraph();
+                addStyledRun(p, label, 9, true, COLOR_PRIMARY);
+            } else {
+                tcPr.addNewHMerge().setVal(STMerge.CONTINUE);
+            }
+        }
+    }
+
+    // === Data row ===
+
+    private static void addDataRow(XWPFTable table, int rowIdx, ComparableProperty c, boolean isSold) {
+        XWPFTableRow row = table.getRow(rowIdx);
+
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = row.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellMargins(cell, 40, 60, 40, 60);
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+
+            switch (i) {
+                case 0 -> addLocalityCell(p, c);
+                case 1 -> addStyledRun(p, c.getFormattedPrice(), 9, true, null);
+                case 2 -> addStyledRun(p, c.getFormattedPricePerSqm(), 9, true, null);
+                case 3 -> addDetailsCell(p, c, isSold);
+            }
+        }
+    }
+
+    private static void addLocalityCell(XWPFParagraph p, ComparableProperty c) {
+        XWPFRun streetRun = addStyledRun(p, safe(c.getStreet()) + ",", 9, true, null);
+        streetRun.addBreak();
+        addStyledRun(p, safe(c.getDisposition()) + ", " + c.getArea() + " m²", 8, false, COLOR_GRAY);
+    }
+
+    private static void addDetailsCell(XWPFParagraph p, ComparableProperty c, boolean isSold) {
+        StringBuilder details = new StringBuilder();
+        if (c.getFloor() != null && !c.getFloor().isBlank()) details.append(c.getFloor());
+        if (c.getExtras() != null && !c.getExtras().isBlank()) {
+            if (!details.isEmpty()) details.append(", ");
+            details.append(c.getExtras());
+        }
+        if (c.getCondition() != null && !c.getCondition().isBlank()) {
+            if (!details.isEmpty()) details.append(", ");
+            details.append(c.getCondition());
+        }
+
+        addStyledRun(p, details.toString(), 8, false, null);
+
+        if (isSold && c.getSoldDate() != null && !c.getSoldDate().isBlank()) {
+            p.createRun().addBreak();
+            String soldText = "Prodáno v " + c.getSoldDate();
+            if (c.getSoldDuration() != null && !c.getSoldDuration().isBlank()) {
+                soldText += " za " + c.getSoldDuration();
+            }
+            addStyledRun(p, soldText, 8, true, COLOR_GREEN);
+        }
+    }
+
+    // === Section heading ===
+
+    private static void addSectionHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(200);
+        p.setSpacingAfter(200);
+        p.setBorderBottom(Borders.SINGLE);
+        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
+    }
+}
+--------------------------------------------------------------------------------
+
 FILE: src/main/resources/application.properties
 ----------------------------------------
 server.port=8080
@@ -2972,42 +2985,8 @@ body {
 
 --------------------------------------------------------------------------------
 
-FILE: src/main/resources/static/js/app.js
+FILE: src/main/resources/static/js/api.js
 ----------------------------------------
-// ==================== STATE ====================
-
-const state = {
-    projectName: '',
-    subject: {
-        date: new Date().toISOString().split('T')[0],
-        clientName: '',
-        disposition: '',
-        ownership: 'OV',
-        area: '',
-        extras: '',
-        address: '',
-        description: '',
-        photoFilenames: []
-    },
-    comparables: [],
-    pricing: {
-        positives: [],
-        negatives: [],
-        recommendation: '',
-        priceFrom: '',
-        priceTo: '',
-        startPrice: ''
-    },
-    // Agent defaults
-    agentName: 'Martin Halgaš',
-    agentTitle: 'Realitní makléř',
-    agentPhone: '+420 731 502 750',
-    agentEmail: 'martin.halgas@re-max.cz',
-    agencyName: 'RE/MAX Anděl',
-    agencyAddress: 'Ostrovského 253/3 – 150 00 Praha 5 - Smíchov',
-    agentWebsite: 'www.halgasreality.cz'
-};
-
 // ==================== API ====================
 
 const API = {
@@ -3043,150 +3022,159 @@ const API = {
         return res.json();
     },
 
-    async uploadPhotos(files) {
-        const formData = new FormData();
-        for (const f of files) formData.append('files', f);
-        const res = await fetch('/api/photos/batch', { method: 'POST', body: formData });
-        return res.json();
-    },
-
     getPhotoUrl(filename) {
         return `/api/photos/${filename}`;
     },
 
-    async function exportDocx() {
-        try {
-            const res = await fetch('/api/export/docx', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(state)
-            });
-            if (!res.ok) throw new Error('Export selhal');
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `STA_${state.subject.clientName || 'export'}.docx`;
-            a.click();
-            URL.revokeObjectURL(url);
-            notify('DOCX staženo!');
-        } catch (e) {
-            notify('Chyba při exportu DOCX', 'error');
-        }
-    }
-
     async exportPdf(data, preview = false) {
         const endpoint = preview ? '/api/export/pdf/preview' : '/api/export/pdf';
-        const res = await fetch(endpoint, {
+        return fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return res;
     }
 };
+--------------------------------------------------------------------------------
 
+FILE: src/main/resources/static/js/app.js
+----------------------------------------
 // ==================== TABS ====================
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        // Deactivate all
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        // Activate selected
         btn.classList.add('active');
         const tabId = btn.getAttribute('data-tab');
         document.getElementById('tab-' + tabId).classList.add('active');
-        // Refresh certain tabs
         if (tabId === 'table') renderComparisonTable();
         if (tabId === 'export') updateExportStats();
     });
 });
 
-// ==================== NOTIFICATIONS ====================
+// ==================== PROJECT SAVE/LOAD ====================
 
-function notify(message, type = 'success') {
-    const el = document.createElement('div');
-    el.className = `notification notification-${type}`;
-    el.textContent = message;
-    document.getElementById('notifications').appendChild(el);
-    setTimeout(() => el.remove(), 3000);
-}
-
-// ==================== SUBJECT PHOTOS ====================
-
-function renderSubjectPhotos() {
-    const grid = document.getElementById('subjectPhotos');
-    grid.innerHTML = '';
-
-    state.subject.photoFilenames.forEach((filename, i) => {
-        const item = document.createElement('div');
-        item.className = 'photo-item';
-        item.innerHTML = `
-            <img src="${API.getPhotoUrl(filename)}" alt="Foto ${i + 1}">
-            <button class="photo-remove" onclick="removeSubjectPhoto(${i})">×</button>
-        `;
-        grid.appendChild(item);
-    });
-
-    if (state.subject.photoFilenames.length < 6) {
-        const addBtn = document.createElement('label');
-        addBtn.className = 'photo-add';
-        addBtn.innerHTML = `
-            <span class="plus">+</span>
-            <span>Foto ${state.subject.photoFilenames.length}/6</span>
-            <input type="file" accept="image/*" multiple style="display:none"
-                   onchange="handleSubjectPhotos(this.files)">
-        `;
-        grid.appendChild(addBtn);
+async function saveProject() {
+    const name = document.getElementById('projectName').value.trim();
+    if (!name) {
+        notify('Zadejte název projektu', 'error');
+        document.getElementById('projectName').focus();
+        return;
+    }
+    state.projectName = name;
+    try {
+        await API.saveProject(state);
+        notify('Projekt uložen!');
+        refreshProjectList();
+    } catch (e) {
+        notify('Chyba při ukládání', 'error');
     }
 }
 
-async function handleSubjectPhotos(files) {
-    const remaining = 6 - state.subject.photoFilenames.length;
-    const toUpload = Array.from(files).slice(0, remaining);
-
-    for (const file of toUpload) {
-        try {
-            const result = await API.uploadPhoto(file);
-            if (result.status === 'ok') {
-                state.subject.photoFilenames.push(result.filename);
-            } else {
-                notify(result.message || 'Chyba při nahrávání', 'error');
-            }
-        } catch (e) {
-            notify('Chyba při nahrávání fotky', 'error');
-        }
+async function refreshProjectList() {
+    try {
+        const projects = await API.listProjects();
+        const select = document.getElementById('projectSelect');
+        select.innerHTML = '<option value="">— Načíst projekt —</option>';
+        projects.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = p;
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to list projects', e);
     }
-    renderSubjectPhotos();
 }
 
-function removeSubjectPhoto(index) {
-    state.subject.photoFilenames.splice(index, 1);
-    renderSubjectPhotos();
+async function loadSelectedProject() {
+    const name = document.getElementById('projectSelect').value;
+    if (!name) return;
+    try {
+        const data = await API.loadProject(name);
+        Object.assign(state, data);
+        populateUI();
+        notify('Projekt načten!');
+    } catch (e) {
+        notify('Chyba při načítání projektu', 'error');
+    }
 }
 
+async function deleteSelectedProject() {
+    const name = document.getElementById('projectSelect').value;
+    if (!name) return;
+    if (!confirm(`Smazat projekt "${name}"?`)) return;
+    try {
+        await API.deleteProject(name);
+        notify('Projekt smazán');
+        refreshProjectList();
+    } catch (e) {
+        notify('Chyba při mazání', 'error');
+    }
+}
+
+function resetAll() {
+    if (!confirm('Opravdu chcete smazat všechna data?')) return;
+    state.projectName = '';
+    state.subject = {
+        date: new Date().toISOString().split('T')[0],
+        clientName: '', disposition: '', ownership: 'OV',
+        area: '', extras: '', address: '', description: '', photoFilenames: []
+    };
+    state.comparables = [];
+    state.pricing = { positives: [], negatives: [], recommendation: '', priceFrom: '', priceTo: '', startPrice: '' };
+    populateUI();
+    notify('Data resetována');
+}
+
+// ==================== POPULATE UI ====================
+
+function populateUI() {
+    document.getElementById('projectName').value = state.projectName || '';
+
+    document.getElementById('subjectDate').value = state.subject.date || '';
+    document.getElementById('subjectClient').value = state.subject.clientName || '';
+    document.getElementById('subjectDisposition').value = state.subject.disposition || '';
+    document.getElementById('subjectOwnership').value = state.subject.ownership || 'OV';
+    document.getElementById('subjectArea').value = state.subject.area || '';
+    document.getElementById('subjectExtras').value = state.subject.extras || '';
+    document.getElementById('subjectAddress').value = state.subject.address || '';
+    document.getElementById('subjectDescription').value = state.subject.description || '';
+    renderSubjectPhotos();
+
+    renderComparables();
+    updateCompCount();
+
+    const p = state.pricing;
+    document.getElementById('pricingPositives').value = (p.positives || []).join('\n');
+    document.getElementById('pricingNegatives').value = (p.negatives || []).join('\n');
+    document.getElementById('pricingRec').value = p.recommendation || '';
+    document.getElementById('pricingFrom').value = p.priceFrom || '';
+    document.getElementById('pricingTo').value = p.priceTo || '';
+    document.getElementById('pricingStart').value = p.startPrice || '';
+}
+
+// ==================== INIT ====================
+
+document.addEventListener('DOMContentLoaded', () => {
+    populateUI();
+    refreshProjectList();
+});
+--------------------------------------------------------------------------------
+
+FILE: src/main/resources/static/js/comparables.js
+----------------------------------------
 // ==================== COMPARABLES ====================
 
 function newComparable() {
     return {
         id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
         category: 'OFFER',
-        disposition: '',
-        area: '',
-        street: '',
-        city: 'Praha',
-        district: '',
-        price: '',
-        floor: '',
-        extras: '',
-        condition: '',
-        soldDate: '',
-        soldDuration: '',
-        photoFilenames: [],
-        descriptionText: '',
-        highlights: [],
-        brokerFeedback: ''
+        disposition: '', area: '', street: '', city: 'Praha', district: '',
+        price: '', floor: '', extras: '', condition: '',
+        soldDate: '', soldDuration: '',
+        photoFilenames: [], descriptionText: '', highlights: [], brokerFeedback: ''
     };
 }
 
@@ -3210,170 +3198,6 @@ function getComp(id) {
     return state.comparables.find(c => c.id === id);
 }
 
-function renderComparables() {
-    const list = document.getElementById('comparablesList');
-
-    if (state.comparables.length === 0) {
-        list.innerHTML = `
-            <div class="empty-state">
-                <div class="icon">🏘️</div>
-                <div class="title">Zatím žádné srovnatelné nemovitosti</div>
-                <div class="desc">Klikněte na "Přidat nemovitost" pro zahájení</div>
-            </div>
-        `;
-        return;
-    }
-
-    list.innerHTML = state.comparables.map(comp => {
-        const isSold = comp.category === 'SOLD';
-        const priceNum = parseInt((comp.price || '0').replace(/\D/g, ''));
-        const areaNum = parseFloat(comp.area || '0');
-        const pricePerM2 = areaNum > 0 ? Math.round(priceNum / areaNum) : 0;
-
-        const headerInfo = [comp.street, comp.disposition, comp.area ? comp.area + ' m²' : '']
-            .filter(Boolean).join(' • ') || 'Nová nemovitost';
-
-        const priceInfo = priceNum > 0
-            ? formatPrice(priceNum) + (pricePerM2 > 0 ? ` (${formatPrice(pricePerM2)}/m²)` : '')
-            : '';
-
-        return `
-        <div class="comp-card" id="comp-${comp.id}">
-            <div class="comp-header ${isSold ? 'comp-header-sold' : 'comp-header-offer'}"
-                 onclick="toggleComp('${comp.id}')">
-                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                    <span class="comp-badge ${isSold ? 'comp-badge-sold' : 'comp-badge-offer'}">
-                        ${isSold ? 'Prodáno' : 'Nabídka'}
-                    </span>
-                    <span class="comp-title">${escHtml(headerInfo)}</span>
-                    <span class="comp-subtitle">${priceInfo}</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:8px">
-                    <button class="btn btn-danger btn-small" onclick="event.stopPropagation();removeComparable('${comp.id}')">Smazat</button>
-                    <span class="comp-arrow" id="arrow-${comp.id}">▾</span>
-                </div>
-            </div>
-            <div class="comp-body" id="body-${comp.id}">
-                <!-- Basic info -->
-                <div class="form-grid form-grid-4">
-                    <div class="form-group">
-                        <label class="form-label">Dispozice</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.disposition)}" placeholder="4+1"
-                               onchange="getComp('${comp.id}').disposition=this.value;renderComparables()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Plocha (m²)</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.area)}" placeholder="82"
-                               onchange="getComp('${comp.id}').area=this.value;renderComparables()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Ulice</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.street)}" placeholder="Bryksova"
-                               onchange="getComp('${comp.id}').street=this.value;renderComparables()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Městská část</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.district)}" placeholder="Černý Most"
-                               onchange="getComp('${comp.id}').district=this.value">
-                    </div>
-                </div>
-                <div class="form-grid form-grid-4">
-                    <div class="form-group">
-                        <label class="form-label">Cena (Kč)</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.price)}" placeholder="8500000"
-                               onchange="getComp('${comp.id}').price=this.value;renderComparables()">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Patro</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.floor)}" placeholder="6. NP"
-                               onchange="getComp('${comp.id}').floor=this.value">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Stav bytu</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.condition)}" placeholder="Po rekonstrukci"
-                               onchange="getComp('${comp.id}').condition=this.value">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Příslušenství</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.extras)}" placeholder="lodžie, sklep"
-                               onchange="getComp('${comp.id}').extras=this.value">
-                    </div>
-                </div>
-
-                <!-- Category buttons -->
-                <div style="display:flex;gap:8px">
-                    <button class="btn-category ${!isSold ? 'active-offer' : ''}"
-                            onclick="getComp('${comp.id}').category='OFFER';renderComparables()">
-                        📋 V nabídce
-                    </button>
-                    <button class="btn-category ${isSold ? 'active-sold' : ''}"
-                            onclick="getComp('${comp.id}').category='SOLD';renderComparables()">
-                        ✓ Prodáno
-                    </button>
-                </div>
-
-                ${isSold ? `
-                <div class="form-grid form-grid-2">
-                    <div class="form-group">
-                        <label class="form-label">Datum prodeje</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.soldDate)}" placeholder="1/2025"
-                               onchange="getComp('${comp.id}').soldDate=this.value">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Doba prodeje</label>
-                        <input type="text" class="form-input" value="${escAttr(comp.soldDuration)}" placeholder="2 měsíce"
-                               onchange="getComp('${comp.id}').soldDuration=this.value">
-                    </div>
-                </div>
-                ` : ''}
-
-                <!-- Photos -->
-                <div class="form-group">
-                    <label class="form-label">Fotografie (max 6)</label>
-                    <div class="photo-grid" id="photos-${comp.id}"></div>
-                </div>
-
-                <!-- Description -->
-                <div class="form-group">
-                    <label class="form-label">Popis z inzerátu</label>
-                    <textarea class="form-input form-textarea" rows="5" placeholder="Vložte popis z inzerátu..."
-                              onchange="getComp('${comp.id}').descriptionText=this.value">${escHtml(comp.descriptionText)}</textarea>
-                </div>
-
-                <!-- Highlights -->
-                <div class="form-group">
-                    <label class="form-label">Důležité body (zvýraznění)</label>
-                    <div class="badge-list">
-                        ${comp.highlights.map((h, i) => `
-                            <span class="badge">${escHtml(h)}
-                                <button onclick="removeHighlight('${comp.id}', ${i})">×</button>
-                            </span>
-                        `).join('')}
-                    </div>
-                    <div class="highlight-input-row">
-                        <input type="text" class="form-input" id="hlInput-${comp.id}"
-                               placeholder="Přidejte důležitý bod a stiskněte Enter..."
-                               onkeydown="if(event.key==='Enter')addHighlight('${comp.id}')">
-                        <button class="btn-highlight" onclick="addHighlight('${comp.id}')">+ Přidat</button>
-                    </div>
-                </div>
-
-                <!-- Broker feedback -->
-                <div class="form-group">
-                    <label class="form-label">Zpětná vazba od makléře</label>
-                    <textarea class="form-input form-textarea" rows="3"
-                              placeholder="Volitelné – zpětná vazba od makléře..."
-                              onchange="getComp('${comp.id}').brokerFeedback=this.value">${escHtml(comp.brokerFeedback)}</textarea>
-                </div>
-            </div>
-        </div>
-        `;
-    }).join('');
-
-    // Render photo grids for each comparable
-    state.comparables.forEach(comp => renderCompPhotos(comp.id));
-}
-
 function toggleComp(id) {
     const body = document.getElementById('body-' + id);
     const arrow = document.getElementById('arrow-' + id);
@@ -3384,63 +3208,6 @@ function toggleComp(id) {
         body.style.display = 'none';
         arrow.classList.remove('open');
     }
-}
-
-// ==================== COMPARABLE PHOTOS ====================
-
-function renderCompPhotos(compId) {
-    const comp = getComp(compId);
-    const grid = document.getElementById('photos-' + compId);
-    if (!grid) return;
-    grid.innerHTML = '';
-
-    comp.photoFilenames.forEach((filename, i) => {
-        const item = document.createElement('div');
-        item.className = 'photo-item';
-        item.innerHTML = `
-            <img src="${API.getPhotoUrl(filename)}" alt="Foto ${i + 1}">
-            <button class="photo-remove" onclick="removeCompPhoto('${compId}', ${i})">×</button>
-        `;
-        grid.appendChild(item);
-    });
-
-    if (comp.photoFilenames.length < 6) {
-        const addBtn = document.createElement('label');
-        addBtn.className = 'photo-add';
-        addBtn.innerHTML = `
-            <span class="plus">+</span>
-            <span>Foto ${comp.photoFilenames.length}/6</span>
-            <input type="file" accept="image/*" multiple style="display:none"
-                   onchange="handleCompPhotos('${compId}', this.files)">
-        `;
-        grid.appendChild(addBtn);
-    }
-}
-
-async function handleCompPhotos(compId, files) {
-    const comp = getComp(compId);
-    const remaining = 6 - comp.photoFilenames.length;
-    const toUpload = Array.from(files).slice(0, remaining);
-
-    for (const file of toUpload) {
-        try {
-            const result = await API.uploadPhoto(file);
-            if (result.status === 'ok') {
-                comp.photoFilenames.push(result.filename);
-            } else {
-                notify(result.message || 'Chyba', 'error');
-            }
-        } catch (e) {
-            notify('Chyba při nahrávání', 'error');
-        }
-    }
-    renderCompPhotos(compId);
-}
-
-function removeCompPhoto(compId, index) {
-    const comp = getComp(compId);
-    comp.photoFilenames.splice(index, 1);
-    renderCompPhotos(compId);
 }
 
 // ==================== HIGHLIGHTS ====================
@@ -3460,6 +3227,118 @@ function removeHighlight(compId, index) {
     renderComparables();
 }
 
+// ==================== RENDER COMPARABLES ====================
+
+function renderComparables() {
+    const list = document.getElementById('comparablesList');
+
+    if (state.comparables.length === 0) {
+        list.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🏘️</div>
+                <div class="title">Zatím žádné srovnatelné nemovitosti</div>
+                <div class="desc">Klikněte na "Přidat nemovitost" pro zahájení</div>
+            </div>`;
+        return;
+    }
+
+    list.innerHTML = state.comparables.map(comp => renderCompCard(comp)).join('');
+    state.comparables.forEach(comp => renderCompPhotos(comp.id));
+}
+
+function renderCompCard(comp) {
+    const isSold = comp.category === 'SOLD';
+    const priceNum = parseInt((comp.price || '0').replace(/\D/g, ''));
+    const areaNum = parseFloat(comp.area || '0');
+    const pricePerM2 = areaNum > 0 ? Math.round(priceNum / areaNum) : 0;
+
+    const headerInfo = [comp.street, comp.disposition, comp.area ? comp.area + ' m²' : '']
+        .filter(Boolean).join(' • ') || 'Nová nemovitost';
+    const priceInfo = priceNum > 0
+        ? formatPrice(priceNum) + (pricePerM2 > 0 ? ` (${formatPrice(pricePerM2)}/m²)` : '') : '';
+
+    return `
+    <div class="comp-card" id="comp-${comp.id}">
+        <div class="comp-header ${isSold ? 'comp-header-sold' : 'comp-header-offer'}"
+             onclick="toggleComp('${comp.id}')">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span class="comp-badge ${isSold ? 'comp-badge-sold' : 'comp-badge-offer'}">
+                    ${isSold ? 'Prodáno' : 'Nabídka'}
+                </span>
+                <span class="comp-title">${escHtml(headerInfo)}</span>
+                <span class="comp-subtitle">${priceInfo}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-danger btn-small" onclick="event.stopPropagation();removeComparable('${comp.id}')">Smazat</button>
+                <span class="comp-arrow" id="arrow-${comp.id}">▾</span>
+            </div>
+        </div>
+        <div class="comp-body" id="body-${comp.id}">
+            <div class="form-grid form-grid-4">
+                <div class="form-group"><label class="form-label">Dispozice</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.disposition)}" placeholder="4+1"
+                           onchange="getComp('${comp.id}').disposition=this.value;renderComparables()"></div>
+                <div class="form-group"><label class="form-label">Plocha (m²)</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.area)}" placeholder="82"
+                           onchange="getComp('${comp.id}').area=this.value;renderComparables()"></div>
+                <div class="form-group"><label class="form-label">Ulice</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.street)}" placeholder="Bryksova"
+                           onchange="getComp('${comp.id}').street=this.value;renderComparables()"></div>
+                <div class="form-group"><label class="form-label">Městská část</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.district)}" placeholder="Černý Most"
+                           onchange="getComp('${comp.id}').district=this.value"></div>
+            </div>
+            <div class="form-grid form-grid-4">
+                <div class="form-group"><label class="form-label">Cena (Kč)</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.price)}" placeholder="8500000"
+                           onchange="getComp('${comp.id}').price=this.value;renderComparables()"></div>
+                <div class="form-group"><label class="form-label">Patro</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.floor)}" placeholder="6. NP"
+                           onchange="getComp('${comp.id}').floor=this.value"></div>
+                <div class="form-group"><label class="form-label">Stav bytu</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.condition)}" placeholder="Po rekonstrukci"
+                           onchange="getComp('${comp.id}').condition=this.value"></div>
+                <div class="form-group"><label class="form-label">Příslušenství</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.extras)}" placeholder="lodžie, sklep"
+                           onchange="getComp('${comp.id}').extras=this.value"></div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn-category ${!isSold ? 'active-offer' : ''}"
+                        onclick="getComp('${comp.id}').category='OFFER';renderComparables()">📋 V nabídce</button>
+                <button class="btn-category ${isSold ? 'active-sold' : ''}"
+                        onclick="getComp('${comp.id}').category='SOLD';renderComparables()">✓ Prodáno</button>
+            </div>
+            ${isSold ? `
+            <div class="form-grid form-grid-2">
+                <div class="form-group"><label class="form-label">Datum prodeje</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.soldDate)}" placeholder="1/2025"
+                           onchange="getComp('${comp.id}').soldDate=this.value"></div>
+                <div class="form-group"><label class="form-label">Doba prodeje</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.soldDuration)}" placeholder="2 měsíce"
+                           onchange="getComp('${comp.id}').soldDuration=this.value"></div>
+            </div>` : ''}
+            <div class="form-group"><label class="form-label">Fotografie (max 6)</label>
+                <div class="photo-grid" id="photos-${comp.id}"></div></div>
+            <div class="form-group"><label class="form-label">Popis z inzerátu</label>
+                <textarea class="form-input form-textarea" rows="5" placeholder="Vložte popis z inzerátu..."
+                          onchange="getComp('${comp.id}').descriptionText=this.value">${escHtml(comp.descriptionText)}</textarea></div>
+            <div class="form-group"><label class="form-label">Důležité body (zvýraznění)</label>
+                <div class="badge-list">
+                    ${comp.highlights.map((h, i) => `<span class="badge">${escHtml(h)}<button onclick="removeHighlight('${comp.id}', ${i})">×</button></span>`).join('')}
+                </div>
+                <div class="highlight-input-row">
+                    <input type="text" class="form-input" id="hlInput-${comp.id}"
+                           placeholder="Přidejte důležitý bod a stiskněte Enter..."
+                           onkeydown="if(event.key==='Enter')addHighlight('${comp.id}')">
+                    <button class="btn-highlight" onclick="addHighlight('${comp.id}')">+ Přidat</button>
+                </div></div>
+            <div class="form-group"><label class="form-label">Zpětná vazba od makléře</label>
+                <textarea class="form-input form-textarea" rows="3" placeholder="Volitelné – zpětná vazba od makléře..."
+                          onchange="getComp('${comp.id}').brokerFeedback=this.value">${escHtml(comp.brokerFeedback)}</textarea></div>
+        </div>
+    </div>`;
+}
+
 // ==================== COMPARISON TABLE ====================
 
 function renderComparisonTable() {
@@ -3468,31 +3347,22 @@ function renderComparisonTable() {
     const sold = state.comparables.filter(c => c.category === 'SOLD');
 
     if (state.comparables.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state" style="border:none">
-                Přidejte srovnatelné nemovitosti pro vygenerování tabulky.
-            </div>
-        `;
+        container.innerHTML = '<div class="empty-state" style="border:none">Přidejte srovnatelné nemovitosti.</div>';
         return;
     }
 
-    let html = `<table class="sta-table">
-        <thead><tr>
-            <th>Lokalita</th>
-            <th>Prodejní cena</th>
-            <th>Cena za m²</th>
-            <th>Výhody / Nevýhody</th>
-        </tr></thead><tbody>`;
+    let html = `<table class="sta-table"><thead><tr>
+        <th>Lokalita</th><th>Prodejní cena</th><th>Cena za m²</th><th>Výhody / Nevýhody</th>
+    </tr></thead><tbody>`;
 
     if (offers.length > 0) {
-        html += `<tr class="section-row section-offer"><td colspan="4">Nabídka</td></tr>`;
+        html += '<tr class="section-row section-offer"><td colspan="4">Nabídka</td></tr>';
         offers.forEach(c => { html += renderTableRow(c, false); });
     }
     if (sold.length > 0) {
-        html += `<tr class="section-row section-sold"><td colspan="4">Prodáno</td></tr>`;
+        html += '<tr class="section-row section-sold"><td colspan="4">Prodáno</td></tr>';
         sold.forEach(c => { html += renderTableRow(c, true); });
     }
-
     html += '</tbody></table>';
     container.innerHTML = html;
 }
@@ -3517,7 +3387,10 @@ function renderTableRow(c, isSold) {
         <td style="font-size:12px;line-height:1.5">${details}</td>
     </tr>`;
 }
+--------------------------------------------------------------------------------
 
+FILE: src/main/resources/static/js/export.js
+----------------------------------------
 // ==================== EXPORT ====================
 
 function updateExportStats() {
@@ -3528,6 +3401,27 @@ function updateExportStats() {
 
     document.getElementById('exportStats').textContent =
         `${state.comparables.length} srovnatelných nemovitostí (${offers} v nabídce, ${sold} prodaných) • ${totalPhotos} fotek celkem`;
+}
+
+async function exportDocx() {
+    try {
+        const res = await fetch('/api/export/docx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(state)
+        });
+        if (!res.ok) throw new Error('Export selhal');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `STA_${state.subject.clientName || 'export'}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        notify('DOCX staženo!');
+    } catch (e) {
+        notify('Chyba při exportu DOCX', 'error');
+    }
 }
 
 async function exportPdf() {
@@ -3599,7 +3493,6 @@ function generateTextPreview() {
     if (state.pricing.startPrice) {
         t += `Počáteční cena: ${formatPrice(parseInt(state.pricing.startPrice))}\n`;
     }
-
     return t;
 }
 
@@ -3612,113 +3505,155 @@ function compToText(c, isSold) {
     if (c.brokerFeedback) t += `Makléř: ${c.brokerFeedback}\n`;
     return t + '\n';
 }
+--------------------------------------------------------------------------------
 
-// ==================== PROJECT SAVE/LOAD ====================
+FILE: src/main/resources/static/js/photos.js
+----------------------------------------
+// ==================== SUBJECT PHOTOS ====================
 
-async function saveProject() {
-    const name = document.getElementById('projectName').value.trim();
-    if (!name) {
-        notify('Zadejte název projektu', 'error');
-        document.getElementById('projectName').focus();
-        return;
-    }
-    state.projectName = name;
-    try {
-        await API.saveProject(state);
-        notify('Projekt uložen!');
-        refreshProjectList();
-    } catch (e) {
-        notify('Chyba při ukládání', 'error');
-    }
-}
+function renderSubjectPhotos() {
+    const grid = document.getElementById('subjectPhotos');
+    grid.innerHTML = '';
 
-async function refreshProjectList() {
-    try {
-        const projects = await API.listProjects();
-        const select = document.getElementById('projectSelect');
-        select.innerHTML = '<option value="">— Načíst projekt —</option>';
-        projects.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p;
-            opt.textContent = p;
-            select.appendChild(opt);
-        });
-    } catch (e) {
-        console.error('Failed to list projects', e);
+    state.subject.photoFilenames.forEach((filename, i) => {
+        const item = document.createElement('div');
+        item.className = 'photo-item';
+        item.innerHTML = `
+            <img src="${API.getPhotoUrl(filename)}" alt="Foto ${i + 1}">
+            <button class="photo-remove" onclick="removeSubjectPhoto(${i})">×</button>
+        `;
+        grid.appendChild(item);
+    });
+
+    if (state.subject.photoFilenames.length < 6) {
+        const addBtn = document.createElement('label');
+        addBtn.className = 'photo-add';
+        addBtn.innerHTML = `
+            <span class="plus">+</span>
+            <span>Foto ${state.subject.photoFilenames.length}/6</span>
+            <input type="file" accept="image/*" multiple style="display:none"
+                   onchange="handleSubjectPhotos(this.files)">
+        `;
+        grid.appendChild(addBtn);
     }
 }
 
-async function loadSelectedProject() {
-    const name = document.getElementById('projectSelect').value;
-    if (!name) return;
-    try {
-        const data = await API.loadProject(name);
-        // Merge loaded data into state
-        Object.assign(state, data);
-        populateUI();
-        notify('Projekt načten!');
-    } catch (e) {
-        notify('Chyba při načítání projektu', 'error');
+async function handleSubjectPhotos(files) {
+    const remaining = 6 - state.subject.photoFilenames.length;
+    const toUpload = Array.from(files).slice(0, remaining);
+
+    for (const file of toUpload) {
+        try {
+            const result = await API.uploadPhoto(file);
+            if (result.status === 'ok') {
+                state.subject.photoFilenames.push(result.filename);
+            } else {
+                notify(result.message || 'Chyba při nahrávání', 'error');
+            }
+        } catch (e) {
+            notify('Chyba při nahrávání fotky', 'error');
+        }
     }
-}
-
-async function deleteSelectedProject() {
-    const name = document.getElementById('projectSelect').value;
-    if (!name) return;
-    if (!confirm(`Smazat projekt "${name}"?`)) return;
-    try {
-        await API.deleteProject(name);
-        notify('Projekt smazán');
-        refreshProjectList();
-    } catch (e) {
-        notify('Chyba při mazání', 'error');
-    }
-}
-
-function resetAll() {
-    if (!confirm('Opravdu chcete smazat všechna data?')) return;
-    state.projectName = '';
-    state.subject = {
-        date: new Date().toISOString().split('T')[0],
-        clientName: '', disposition: '', ownership: 'OV',
-        area: '', extras: '', address: '', description: '', photoFilenames: []
-    };
-    state.comparables = [];
-    state.pricing = { positives: [], negatives: [], recommendation: '', priceFrom: '', priceTo: '', startPrice: '' };
-    populateUI();
-    notify('Data resetována');
-}
-
-// ==================== POPULATE UI FROM STATE ====================
-
-function populateUI() {
-    // Project name
-    document.getElementById('projectName').value = state.projectName || '';
-
-    // Subject
-    document.getElementById('subjectDate').value = state.subject.date || '';
-    document.getElementById('subjectClient').value = state.subject.clientName || '';
-    document.getElementById('subjectDisposition').value = state.subject.disposition || '';
-    document.getElementById('subjectOwnership').value = state.subject.ownership || 'OV';
-    document.getElementById('subjectArea').value = state.subject.area || '';
-    document.getElementById('subjectExtras').value = state.subject.extras || '';
-    document.getElementById('subjectAddress').value = state.subject.address || '';
-    document.getElementById('subjectDescription').value = state.subject.description || '';
     renderSubjectPhotos();
-
-    // Comparables
-    renderComparables();
-    updateCompCount();
-
-    // Pricing
-    const p = state.pricing;
-    document.getElementById('pricingPositives').value = (p.positives || []).join('\n');
-    document.getElementById('pricingNegatives').value = (p.negatives || []).join('\n');
-    document.getElementById('pricingRec').value = p.recommendation || '';
-    document.getElementById('pricingFrom').value = p.priceFrom || '';
-    document.getElementById('pricingTo').value = p.priceTo || '';
-    document.getElementById('pricingStart').value = p.startPrice || '';
 }
+
+function removeSubjectPhoto(index) {
+    state.subject.photoFilenames.splice(index, 1);
+    renderSubjectPhotos();
+}
+
+// ==================== COMPARABLE PHOTOS ====================
+
+function renderCompPhotos(compId) {
+    const comp = getComp(compId);
+    const grid = document.getElementById('photos-' + compId);
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    comp.photoFilenames.forEach((filename, i) => {
+        const item = document.createElement('div');
+        item.className = 'photo-item';
+        item.innerHTML = `
+            <img src="${API.getPhotoUrl(filename)}" alt="Foto ${i + 1}">
+            <button class="photo-remove" onclick="removeCompPhoto('${compId}', ${i})">×</button>
+        `;
+        grid.appendChild(item);
+    });
+
+    if (comp.photoFilenames.length < 6) {
+        const addBtn = document.createElement('label');
+        addBtn.className = 'photo-add';
+        addBtn.innerHTML = `
+            <span class="plus">+</span>
+            <span>Foto ${comp.photoFilenames.length}/6</span>
+            <input type="file" accept="image/*" multiple style="display:none"
+                   onchange="handleCompPhotos('${compId}', this.files)">
+        `;
+        grid.appendChild(addBtn);
+    }
+}
+
+async function handleCompPhotos(compId, files) {
+    const comp = getComp(compId);
+    const remaining = 6 - comp.photoFilenames.length;
+    const toUpload = Array.from(files).slice(0, remaining);
+
+    for (const file of toUpload) {
+        try {
+            const result = await API.uploadPhoto(file);
+            if (result.status === 'ok') {
+                comp.photoFilenames.push(result.filename);
+            } else {
+                notify(result.message || 'Chyba', 'error');
+            }
+        } catch (e) {
+            notify('Chyba při nahrávání', 'error');
+        }
+    }
+    renderCompPhotos(compId);
+}
+
+function removeCompPhoto(compId, index) {
+    const comp = getComp(compId);
+    comp.photoFilenames.splice(index, 1);
+    renderCompPhotos(compId);
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/resources/static/js/state.js
+----------------------------------------
+// ==================== STATE ====================
+
+const state = {
+    projectName: '',
+    subject: {
+        date: new Date().toISOString().split('T')[0],
+        clientName: '',
+        disposition: '',
+        ownership: 'OV',
+        area: '',
+        extras: '',
+        address: '',
+        description: '',
+        photoFilenames: []
+    },
+    comparables: [],
+    pricing: {
+        positives: [],
+        negatives: [],
+        recommendation: '',
+        priceFrom: '',
+        priceTo: '',
+        startPrice: ''
+    },
+    agentName: 'Martin Halgaš',
+    agentTitle: 'Realitní makléř',
+    agentPhone: '+420 731 502 750',
+    agentEmail: 'martin.halgas@re-max.cz',
+    agencyName: 'RE/MAX Anděl',
+    agencyAddress: 'Ostrovského 253/3 – 150 00 Praha 5 - Smíchov',
+    agentWebsite: 'www.halgasreality.cz'
+};
 
 // ==================== HELPERS ====================
 
@@ -3737,13 +3672,15 @@ function escAttr(str) {
     return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// ==================== INIT ====================
+// ==================== NOTIFICATIONS ====================
 
-document.addEventListener('DOMContentLoaded', () => {
-    populateUI();
-    refreshProjectList();
-});
-
+function notify(message, type = 'success') {
+    const el = document.createElement('div');
+    el.className = `notification notification-${type}`;
+    el.textContent = message;
+    document.getElementById('notifications').appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+}
 --------------------------------------------------------------------------------
 
 FILE: src/main/resources/templates/index.html
@@ -3927,6 +3864,11 @@ FILE: src/main/resources/templates/index.html
 <!-- Notification container -->
 <div id="notifications"></div>
 
+<script src="/js/state.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/photos.js"></script>
+<script src="/js/comparables.js"></script>
+<script src="/js/export.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>

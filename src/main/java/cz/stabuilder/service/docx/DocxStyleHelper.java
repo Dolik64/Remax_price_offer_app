@@ -103,10 +103,9 @@ public class DocxStyleHelper {
     // === Zvýraznění textu (žluté pozadí) ===
 
     public static void setRunHighlight(XWPFRun run, String bgColor) {
-        CTRPr rpr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
-        CTShd shd = rpr.isSetShd() ? rpr.getShd() : rpr.addNewShd();
-        shd.setVal(STShd.CLEAR);
-        shd.setFill(bgColor);
+        // Zcela obcházíme problematické CTShd schéma a použijeme nativní zvýraznění POI.
+        // Tím pádem se nemusíme tahat s full-ooxml knihovnou.
+        run.setTextHighlightColor("yellow");
     }
 
     // === Textové helpery ===
