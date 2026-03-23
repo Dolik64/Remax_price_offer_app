@@ -1,4 +1,4 @@
-FOLDER DUMP - 2026-03-23 10:55:16.997421
+FOLDER DUMP - 2026-03-23 11:02:25.850997
 ================================================================================
 
 DIRECTORY TREE
@@ -2183,8 +2183,9 @@ public class DocxPhotoHelper {
             String lower = filename.toLowerCase();
             int picType = lower.endsWith(".png") ? XWPFDocument.PICTURE_TYPE_PNG : XWPFDocument.PICTURE_TYPE_JPEG;
 
+            // Explicitní přetypování na int řeší chybu kompilace
             run.addPicture(new ByteArrayInputStream(imageBytes), picType, filename,
-                    targetWidthEmu, targetHeightEmu);
+                    (int) targetWidthEmu, (int) targetHeightEmu);
 
         } catch (Exception e) {
             cell.setText("[Fotka: " + filename + "]");
@@ -2300,13 +2301,9 @@ public class DocxStyleHelper {
     // === Zvýraznění textu (žluté pozadí) ===
 
     public static void setRunHighlight(XWPFRun run, String bgColor) {
-        CTRPr rpr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
-        CTShd shd = rpr.getShd();
-        if (shd == null) {
-            shd = rpr.addNewShd();
-        }
-        shd.setVal(STShd.CLEAR);
-        shd.setFill(bgColor);
+        // Zcela obcházíme problematické CTShd schéma a použijeme nativní zvýraznění POI.
+        // Tím pádem se nemusíme tahat s full-ooxml knihovnou.
+        run.setTextHighlightColor("yellow");
     }
 
     // === Textové helpery ===

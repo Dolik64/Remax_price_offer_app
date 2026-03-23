@@ -43,6 +43,31 @@ function toggleComp(id) {
     }
 }
 
+// ==================== UPDATE FIELD (BEZ ZTRÁTY FOCUSU) ====================
+
+function updateCompField(compId, field, value) {
+    const comp = getComp(compId);
+    comp[field] = value;
+
+    // Dynamicky upravíme pouze hlavičku, abychom nepřekreslovali celý DOM a neztratili Tab focus
+    const titleEl = document.getElementById('title-' + compId);
+    const subtitleEl = document.getElementById('subtitle-' + compId);
+
+    if (titleEl && subtitleEl) {
+        const headerInfo = [comp.street, comp.disposition, comp.area ? comp.area + ' m²' : '']
+            .filter(Boolean).join(' • ') || 'Nová nemovitost';
+
+        const priceNum = parseInt((comp.price || '0').replace(/\D/g, ''));
+        const areaNum = parseFloat(comp.area || '0');
+        const pricePerM2 = areaNum > 0 ? Math.round(priceNum / areaNum) : 0;
+        const priceInfo = priceNum > 0
+            ? formatPrice(priceNum) + (pricePerM2 > 0 ? ` (${formatPrice(pricePerM2)}/m²)` : '') : '';
+
+        titleEl.textContent = headerInfo;
+        subtitleEl.textContent = priceInfo;
+    }
+}
+
 // ==================== HIGHLIGHTS ====================
 
 function addHighlight(compId) {
@@ -98,8 +123,8 @@ function renderCompCard(comp) {
                 <span class="comp-badge ${isSold ? 'comp-badge-sold' : 'comp-badge-offer'}">
                     ${isSold ? 'Prodáno' : 'Nabídka'}
                 </span>
-                <span class="comp-title">${escHtml(headerInfo)}</span>
-                <span class="comp-subtitle">${priceInfo}</span>
+                <span class="comp-title" id="title-${comp.id}">${escHtml(headerInfo)}</span>
+                <span class="comp-subtitle" id="subtitle-${comp.id}">${escHtml(priceInfo)}</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
                 <button class="btn btn-danger btn-small" onclick="event.stopPropagation();removeComparable('${comp.id}')">Smazat</button>
@@ -110,30 +135,30 @@ function renderCompCard(comp) {
             <div class="form-grid form-grid-4">
                 <div class="form-group"><label class="form-label">Dispozice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.disposition)}" placeholder="4+1"
-                           onchange="getComp('${comp.id}').disposition=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'disposition', this.value)"></div>
                 <div class="form-group"><label class="form-label">Plocha (m²)</label>
                     <input type="text" class="form-input" value="${escAttr(comp.area)}" placeholder="82"
-                           onchange="getComp('${comp.id}').area=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'area', this.value)"></div>
                 <div class="form-group"><label class="form-label">Ulice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.street)}" placeholder="Bryksova"
-                           onchange="getComp('${comp.id}').street=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'street', this.value)"></div>
                 <div class="form-group"><label class="form-label">Městská část</label>
                     <input type="text" class="form-input" value="${escAttr(comp.district)}" placeholder="Černý Most"
-                           onchange="getComp('${comp.id}').district=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'district', this.value)"></div>
             </div>
             <div class="form-grid form-grid-4">
                 <div class="form-group"><label class="form-label">Cena (Kč)</label>
                     <input type="text" class="form-input" value="${escAttr(comp.price)}" placeholder="8500000"
-                           onchange="getComp('${comp.id}').price=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'price', this.value)"></div>
                 <div class="form-group"><label class="form-label">Patro</label>
                     <input type="text" class="form-input" value="${escAttr(comp.floor)}" placeholder="6. NP"
-                           onchange="getComp('${comp.id}').floor=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'floor', this.value)"></div>
                 <div class="form-group"><label class="form-label">Stav bytu</label>
                     <input type="text" class="form-input" value="${escAttr(comp.condition)}" placeholder="Po rekonstrukci"
-                           onchange="getComp('${comp.id}').condition=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'condition', this.value)"></div>
                 <div class="form-group"><label class="form-label">Příslušenství</label>
                     <input type="text" class="form-input" value="${escAttr(comp.extras)}" placeholder="lodžie, sklep"
-                           onchange="getComp('${comp.id}').extras=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'extras', this.value)"></div>
             </div>
             <div style="display:flex;gap:8px">
                 <button class="btn-category ${!isSold ? 'active-offer' : ''}"
@@ -145,16 +170,16 @@ function renderCompCard(comp) {
             <div class="form-grid form-grid-2">
                 <div class="form-group"><label class="form-label">Datum prodeje</label>
                     <input type="text" class="form-input" value="${escAttr(comp.soldDate)}" placeholder="1/2025"
-                           onchange="getComp('${comp.id}').soldDate=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'soldDate', this.value)"></div>
                 <div class="form-group"><label class="form-label">Doba prodeje</label>
                     <input type="text" class="form-input" value="${escAttr(comp.soldDuration)}" placeholder="2 měsíce"
-                           onchange="getComp('${comp.id}').soldDuration=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'soldDuration', this.value)"></div>
             </div>` : ''}
             <div class="form-group"><label class="form-label">Fotografie (max 6)</label>
                 <div class="photo-grid" id="photos-${comp.id}"></div></div>
             <div class="form-group"><label class="form-label">Popis z inzerátu</label>
                 <textarea class="form-input form-textarea" rows="5" placeholder="Vložte popis z inzerátu..."
-                          onchange="getComp('${comp.id}').descriptionText=this.value">${escHtml(comp.descriptionText)}</textarea></div>
+                          onchange="updateCompField('${comp.id}', 'descriptionText', this.value)">${escHtml(comp.descriptionText)}</textarea></div>
             <div class="form-group"><label class="form-label">Důležité body (zvýraznění)</label>
                 <div class="badge-list">
                     ${comp.highlights.map((h, i) => `<span class="badge">${escHtml(h)}<button onclick="removeHighlight('${comp.id}', ${i})">×</button></span>`).join('')}
@@ -167,7 +192,7 @@ function renderCompCard(comp) {
                 </div></div>
             <div class="form-group"><label class="form-label">Zpětná vazba od makléře</label>
                 <textarea class="form-input form-textarea" rows="3" placeholder="Volitelné – zpětná vazba od makléře..."
-                          onchange="getComp('${comp.id}').brokerFeedback=this.value">${escHtml(comp.brokerFeedback)}</textarea></div>
+                          onchange="updateCompField('${comp.id}', 'brokerFeedback', this.value)">${escHtml(comp.brokerFeedback)}</textarea></div>
         </div>
     </div>`;
 }
