@@ -78,6 +78,27 @@ const API = {
         return `/api/photos/${filename}`;
     },
 
+    async function exportDocx() {
+        try {
+            const res = await fetch('/api/export/docx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(state)
+            });
+            if (!res.ok) throw new Error('Export selhal');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `STA_${state.subject.clientName || 'export'}.docx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            notify('DOCX staženo!');
+        } catch (e) {
+            notify('Chyba při exportu DOCX', 'error');
+        }
+    }
+
     async exportPdf(data, preview = false) {
         const endpoint = preview ? '/api/export/pdf/preview' : '/api/export/pdf';
         const res = await fetch(endpoint, {

@@ -1,4 +1,4 @@
-FOLDER DUMP - 2026-03-23 09:59:35.878196
+FOLDER DUMP - 2026-03-23 10:32:16.236942
 ================================================================================
 
 DIRECTORY TREE
@@ -10,15 +10,6 @@ ROOT: /Users/jirka/Downloads/halgy app/sta-builder
   [F] README.md
   [D] src
     [D] src/main
-      [D] src/main/resources
-        [F] application.properties
-        [D] src/main/resources/static
-          [D] src/main/resources/static/css
-            [F] style.css
-          [D] src/main/resources/static/js
-            [F] app.js
-        [D] src/main/resources/templates
-          [F] index.html
       [D] src/main/java
         [D] src/main/java/cz
           [D] src/main/java/cz/stabuilder
@@ -34,11 +25,25 @@ ROOT: /Users/jirka/Downloads/halgy app/sta-builder
               [F] StaProject.java
               [F] Subject.java
             [D] src/main/java/cz/stabuilder/service
+              [F] DocxContentBuilder.java
               [F] DocxExportService.java
+              [F] DocxPhotoHelper.java
+              [F] DocxStyleHelper.java
+              [F] DocxTableBuilder.java
               [F] PdfExportService.java
               [F] PhotoService.java
               [F] ProjectService.java
               [F] StaService.java
+      [D] src/main/resources
+        [F] application.properties
+        [D] src/main/resources/static
+          [D] src/main/resources/static/css
+            [F] style.css
+          [D] src/main/resources/static/js
+            [F] app.js
+        [D] src/main/resources/templates
+          [F] index.html
+  [D] uploads
 ================================================================================
 FILE: pom.xml
 ----------------------------------------
@@ -212,6 +217,2319 @@ sta-builder/
 - [ ] Šablona DOCX s logem RE/MAX
 - [ ] Import dat z realitních portálů (Sreality, Bezrealitky)
 - [ ] PDF export jako alternativa
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/StaBuilderApplication.java
+----------------------------------------
+package cz.stabuilder;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class StaBuilderApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(StaBuilderApplication.class, args);
+        System.out.println("\n=== STA Builder běží na http://localhost:8080 ===\n");
+    }
+}
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/config/WebConfig.java
+----------------------------------------
+package cz.stabuilder.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+                .allowedOrigins("*")
+                .allowedMethods("GET", "POST", "PUT", "DELETE")
+                .allowedHeaders("*");
+    }
+}
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/controller/PageController.java
+----------------------------------------
+package cz.stabuilder.controller;
+
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+
+/**
+ * Servíruje hlavní HTML stránku.
+ */
+@Controller
+public class PageController {
+
+    @GetMapping("/")
+    public String index() {
+        return "index";
+    }
+}
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/controller/StaController.java
+----------------------------------------
+package cz.stabuilder.controller;
+
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.service.DocxExportService;
+import cz.stabuilder.service.PdfExportService;
+import cz.stabuilder.service.PhotoService;
+import cz.stabuilder.service.ProjectService;
+import cz.stabuilder.service.StaService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * REST API pro STA Builder.
+ */
+@RestController
+@RequestMapping("/api")
+public class StaController {
+
+    private final StaService staService;
+    private final DocxExportService docxExportService;
+    private final PdfExportService pdfExportService;
+    private final PhotoService photoService;
+    private final ProjectService projectService;
+
+    public StaController(StaService staService,
+                         DocxExportService docxExportService,
+                         PdfExportService pdfExportService,
+                         PhotoService photoService,
+                         ProjectService projectService) {
+        this.staService = staService;
+        this.docxExportService = docxExportService;
+        this.pdfExportService = pdfExportService;
+        this.photoService = photoService;
+        this.projectService = projectService;
+    }
+
+    // ==================== PROJEKTY ====================
+
+    @PostMapping("/projects")
+    public Map<String, String> saveProject(@RequestBody StaProject project) throws IOException {
+        projectService.save(project);
+        return Map.of("status", "ok", "name", project.getProjectName());
+    }
+
+    @GetMapping("/projects")
+    public List<String> listProjects() throws IOException {
+        return projectService.listProjects();
+    }
+
+    @GetMapping("/projects/{name}")
+    public ResponseEntity<StaProject> loadProject(@PathVariable String name) {
+        try {
+            return ResponseEntity.ok(projectService.load(name));
+        } catch (IOException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/projects/{name}")
+    public Map<String, String> deleteProject(@PathVariable String name) throws IOException {
+        boolean deleted = projectService.delete(name);
+        return Map.of("status", deleted ? "ok" : "not_found");
+    }
+
+    // ==================== FOTKY ====================
+
+    @PostMapping("/photos")
+    public Map<String, String> uploadPhoto(@RequestParam("file") MultipartFile file) {
+        try {
+            String filename = photoService.savePhoto(file);
+            return Map.of("status", "ok", "filename", filename);
+        } catch (IOException e) {
+            return Map.of("status", "error", "message", e.getMessage());
+        }
+    }
+
+    @PostMapping("/photos/batch")
+    public Map<String, Object> uploadPhotos(@RequestParam("files") List<MultipartFile> files) {
+        List<String> filenames = new java.util.ArrayList<>();
+        List<String> errors = new java.util.ArrayList<>();
+        for (MultipartFile file : files) {
+            try {
+                filenames.add(photoService.savePhoto(file));
+            } catch (IOException e) {
+                errors.add(e.getMessage());
+            }
+        }
+        return Map.of("status", "ok", "filenames", filenames, "errors", errors);
+    }
+
+    @GetMapping("/photos/{filename}")
+    public ResponseEntity<byte[]> getPhoto(@PathVariable String filename) {
+        try {
+            var path = photoService.getPhotoPath(filename);
+            if (!Files.exists(path)) return ResponseEntity.notFound().build();
+            byte[] data = Files.readAllBytes(path);
+            String ct = filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+            return ResponseEntity.ok().contentType(MediaType.parseMediaType(ct)).body(data);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // ==================== EXPORT PDF ====================
+
+    @PostMapping("/export/pdf")
+    public ResponseEntity<byte[]> exportPdf(@RequestBody StaProject project) throws IOException {
+        byte[] pdf = pdfExportService.generatePdf(project);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename(project, "pdf") + "\"")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
+    }
+
+    @PostMapping("/export/pdf/preview")
+    public ResponseEntity<byte[]> previewPdf(@RequestBody StaProject project) throws IOException {
+        byte[] pdf = pdfExportService.generatePdf(project);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF).body(pdf);
+    }
+
+    // ==================== EXPORT DOCX ====================
+
+    /** DOCX export z klientského stavu (POST). */
+    @PostMapping("/export/docx")
+    public ResponseEntity<byte[]> exportDocxPost(@RequestBody StaProject project) throws IOException {
+        byte[] docx = docxExportService.generateDocx(project);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename(project, "docx") + "\"")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+                .body(docx);
+    }
+
+    @GetMapping("/export/json")
+    public StaProject exportJson() {
+        return staService.getProject();
+    }
+
+    // ==================== LEGACY ====================
+
+    @GetMapping("/project")
+    public StaProject getProject() {
+        return staService.getProject();
+    }
+
+    @PostMapping("/project/reset")
+    public Map<String, String> resetProject() {
+        staService.resetProject();
+        return Map.of("status", "ok");
+    }
+
+    // === Helper ===
+
+    private static String exportFilename(StaProject project, String ext) {
+        String client = project.getSubject() != null ? project.getSubject().getClientName() : null;
+        String safe = safeName(client);
+        return "STA_" + safe + "." + ext;
+    }
+
+    private static String safeName(String name) {
+        if (name == null || name.isBlank()) return "export";
+        return name.replaceAll("[^a-zA-Z0-9ěščřžýáíéůúďťňĚŠČŘŽÝÁÍÉŮÚĎŤŇ]", "_");
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/model/ComparableProperty.java
+----------------------------------------
+package cz.stabuilder.model;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Srovnatelná nemovitost — buď aktuálně v nabídce, nebo nedávno prodaná.
+ */
+public class ComparableProperty {
+
+    public enum Category {
+        OFFER,
+        SOLD
+    }
+
+    private Long id;
+    private Category category = Category.OFFER;
+
+    private String disposition;
+    private int areaSqm;
+    private String street;
+    private String district;
+    private String city = "Praha";
+    private long priceKc;
+    private String floor;
+    private String extras;
+    private String condition;
+
+    private String soldDate;
+    private String soldDuration;
+
+    private List<String> photoFilenames = new ArrayList<>();
+    private String descriptionText;
+    private List<String> highlights = new ArrayList<>();
+    private String brokerFeedback;
+
+    public ComparableProperty() {
+        this.id = System.currentTimeMillis();
+    }
+
+    // === Výpočty ===
+
+    public long getPricePerSqm() {
+        if (areaSqm <= 0) return 0;
+        return Math.round((double) priceKc / areaSqm);
+    }
+
+    public String getFormattedPrice() {
+        return String.format("%,d Kč", priceKc).replace(',', ' ');
+    }
+
+    public String getFormattedPricePerSqm() {
+        long ppm = getPricePerSqm();
+        return ppm > 0 ? String.format("%,d Kč", ppm).replace(',', ' ') : "–";
+    }
+
+    public String getTableSummary() {
+        StringBuilder sb = new StringBuilder();
+        if (floor != null && !floor.isBlank()) sb.append(floor);
+        if (extras != null && !extras.isBlank()) {
+            if (!sb.isEmpty()) sb.append(", ");
+            sb.append(extras);
+        }
+        if (category == Category.SOLD && soldDate != null && !soldDate.isBlank()) {
+            if (!sb.isEmpty()) sb.append("\n");
+            sb.append("Prodáno ").append(soldDate);
+            if (soldDuration != null && !soldDuration.isBlank()) {
+                sb.append(" za ").append(soldDuration);
+            }
+        }
+        return sb.toString();
+    }
+
+    // === Aliasy pro PdfExportService ===
+
+    /** Plocha jako String pro PDF šablonu. */
+    public String getArea() {
+        return String.valueOf(areaSqm);
+    }
+
+    /** Numerická cena pro PDF formátování. */
+    public long getPriceNumeric() {
+        return priceKc;
+    }
+
+    /** Cena za m² (alias). */
+    public long getPricePerM2() {
+        return getPricePerSqm();
+    }
+
+    /** Plná lokace (ulice). */
+    public String getFullLocation() {
+        return street != null ? street : "";
+    }
+
+    // === Getters & Setters ===
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public Category getCategory() { return category; }
+    public void setCategory(Category category) { this.category = category; }
+
+    public String getDisposition() { return disposition; }
+    public void setDisposition(String disposition) { this.disposition = disposition; }
+
+    public int getAreaSqm() { return areaSqm; }
+    public void setAreaSqm(int areaSqm) { this.areaSqm = areaSqm; }
+
+    public String getStreet() { return street; }
+    public void setStreet(String street) { this.street = street; }
+
+    public String getDistrict() { return district; }
+    public void setDistrict(String district) { this.district = district; }
+
+    public String getCity() { return city; }
+    public void setCity(String city) { this.city = city; }
+
+    public long getPriceKc() { return priceKc; }
+    public void setPriceKc(long priceKc) { this.priceKc = priceKc; }
+
+    public String getFloor() { return floor; }
+    public void setFloor(String floor) { this.floor = floor; }
+
+    public String getExtras() { return extras; }
+    public void setExtras(String extras) { this.extras = extras; }
+
+    public String getCondition() { return condition; }
+    public void setCondition(String condition) { this.condition = condition; }
+
+    public String getSoldDate() { return soldDate; }
+    public void setSoldDate(String soldDate) { this.soldDate = soldDate; }
+
+    public String getSoldDuration() { return soldDuration; }
+    public void setSoldDuration(String soldDuration) { this.soldDuration = soldDuration; }
+
+    public List<String> getPhotoFilenames() { return photoFilenames; }
+    public void setPhotoFilenames(List<String> photoFilenames) { this.photoFilenames = photoFilenames; }
+
+    public String getDescriptionText() { return descriptionText; }
+    public void setDescriptionText(String descriptionText) { this.descriptionText = descriptionText; }
+
+    public List<String> getHighlights() { return highlights; }
+    public void setHighlights(List<String> highlights) { this.highlights = highlights; }
+
+    public String getBrokerFeedback() { return brokerFeedback; }
+    public void setBrokerFeedback(String brokerFeedback) { this.brokerFeedback = brokerFeedback; }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/model/Pricing.java
+----------------------------------------
+package cz.stabuilder.model;
+
+import java.util.List;
+
+/**
+ * Cenové doporučení — klady, zápory, rozmezí a počáteční cena.
+ */
+public class Pricing {
+
+    private String positives;       // kladné stránky (řádky oddělené \n)
+    private String negatives;       // záporné stránky
+    private String recommendation;  // textové doporučení
+    private long priceFrom;         // cenové rozmezí OD
+    private long priceTo;           // cenové rozmezí DO
+    private long startPrice;        // navržená počáteční cena
+
+    public Pricing() {}
+
+    // === Formátování ===
+
+    public String getFormattedPriceFrom() {
+        return priceFrom > 0 ? String.format("%,d Kč", priceFrom).replace(',', ' ') : "";
+    }
+
+    public String getFormattedPriceTo() {
+        return priceTo > 0 ? String.format("%,d Kč", priceTo).replace(',', ' ') : "";
+    }
+
+    public String getFormattedStartPrice() {
+        return startPrice > 0 ? String.format("%,d Kč", startPrice).replace(',', ' ') : "";
+    }
+
+    public String getFormattedRange() {
+        if (priceFrom > 0 && priceTo > 0) {
+            return String.format("od %s do %s", getFormattedPriceFrom(), getFormattedPriceTo());
+        }
+        return "";
+    }
+
+    // === Aliasy pro PdfExportService ===
+
+    /** Formátované cenové rozmezí pro PDF. */
+    public String getPriceRangeFormatted() {
+        if (priceFrom > 0 && priceTo > 0) {
+            return getFormattedPriceFrom() + " do " + getFormattedPriceTo();
+        }
+        return "";
+    }
+
+    /** Formátovaná počáteční cena (alias). */
+    public String getStartPriceFormatted() {
+        return getFormattedStartPrice();
+    }
+
+    /** Kladné stránky jako List (pro PDF iteraci). */
+    public List<String> getPositivesList() {
+        if (positives == null || positives.isBlank()) return List.of();
+        return List.of(positives.split("\n")).stream()
+                .filter(s -> !s.isBlank())
+                .map(String::trim)
+                .toList();
+    }
+
+    /** Záporné stránky jako List (pro PDF iteraci). */
+    public List<String> getNegativesList() {
+        if (negatives == null || negatives.isBlank()) return List.of();
+        return List.of(negatives.split("\n")).stream()
+                .filter(s -> !s.isBlank())
+                .map(String::trim)
+                .toList();
+    }
+
+    // --- Getters & Setters ---
+
+    public String getPositives() { return positives; }
+    public void setPositives(String positives) { this.positives = positives; }
+
+    public String getNegatives() { return negatives; }
+    public void setNegatives(String negatives) { this.negatives = negatives; }
+
+    public String getRecommendation() { return recommendation; }
+    public void setRecommendation(String recommendation) { this.recommendation = recommendation; }
+
+    public long getPriceFrom() { return priceFrom; }
+    public void setPriceFrom(long priceFrom) { this.priceFrom = priceFrom; }
+
+    public long getPriceTo() { return priceTo; }
+    public void setPriceTo(long priceTo) { this.priceTo = priceTo; }
+
+    public long getStartPrice() { return startPrice; }
+    public void setStartPrice(long startPrice) { this.startPrice = startPrice; }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/model/StaProject.java
+----------------------------------------
+package cz.stabuilder.model;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.OptionalDouble;
+import java.util.OptionalLong;
+
+/**
+ * Celý STA projekt — sdružuje předmět prodeje, srovnatelné nemovitosti a cenové doporučení.
+ */
+public class StaProject {
+
+    private String projectName;
+    private Subject subject = new Subject();
+    private List<ComparableProperty> comparables = new ArrayList<>();
+    private Pricing pricing = new Pricing();
+
+    // Agent info
+    private String agentName = "Martin Halgaš";
+    private String agentTitle = "Realitní makléř";
+    private String agentPhone = "+420 731 502 750";
+    private String agentEmail = "martin.halgas@re-max.cz";
+    private String agencyName = "RE/MAX Anděl";
+    private String agencyAddress = "Ostrovského 253/3 – 150 00 Praha 5 - Smíchov";
+    private String agentWebsite = "www.halgasreality.cz";
+
+    public StaProject() {}
+
+    // === Název projektu ===
+
+    public String getProjectName() {
+        if (projectName != null && !projectName.isBlank()) {
+            return projectName;
+        }
+        StringBuilder sb = new StringBuilder("STA");
+        if (subject.getClientName() != null && !subject.getClientName().isBlank()) {
+            sb.append("_").append(subject.getClientName().trim());
+        }
+        if (subject.getAddress() != null && !subject.getAddress().isBlank()) {
+            String street = subject.getAddress().split(",")[0].trim();
+            sb.append("_").append(street);
+        }
+        return sb.toString();
+    }
+
+    public void setProjectName(String projectName) { this.projectName = projectName; }
+
+    public String getFilenameSafe() {
+        return getProjectName()
+                .replaceAll("[^a-zA-Z0-9ěščřžýáíéůúďťňĚŠČŘŽÝÁÍÉŮÚĎŤŇ_\\-]", "_")
+                .replaceAll("_+", "_");
+    }
+
+    // === Filtrování ===
+
+    public List<ComparableProperty> getOffers() {
+        return comparables.stream()
+                .filter(c -> c.getCategory() == ComparableProperty.Category.OFFER)
+                .toList();
+    }
+
+    public List<ComparableProperty> getSold() {
+        return comparables.stream()
+                .filter(c -> c.getCategory() == ComparableProperty.Category.SOLD)
+                .toList();
+    }
+
+    // === CRUD ===
+
+    public void addComparable(ComparableProperty comp) { comparables.add(comp); }
+
+    public boolean removeComparable(Long id) {
+        return comparables.removeIf(c -> c.getId().equals(id));
+    }
+
+    public ComparableProperty findComparable(Long id) {
+        return comparables.stream()
+                .filter(c -> c.getId().equals(id))
+                .findFirst().orElse(null);
+    }
+
+    // === Statistiky ===
+
+    public int getTotalPhotos() {
+        int count = subject.getPhotoFilenames().size();
+        for (ComparableProperty c : comparables) count += c.getPhotoFilenames().size();
+        return count;
+    }
+
+    public int getTotalComparables() { return comparables.size(); }
+
+    public OptionalDouble getAveragePricePerSqm() {
+        return comparables.stream().filter(c -> c.getPricePerSqm() > 0)
+                .mapToLong(ComparableProperty::getPricePerSqm).average();
+    }
+
+    public boolean isReadyForExport() {
+        return subject.getClientName() != null && !subject.getClientName().isBlank()
+                && subject.getAddress() != null && !subject.getAddress().isBlank()
+                && !comparables.isEmpty();
+    }
+
+    @Override
+    public String toString() {
+        return String.format("StaProject[name=%s, client=%s, comparables=%d, photos=%d]",
+                getProjectName(), subject.getClientName(), comparables.size(), getTotalPhotos());
+    }
+
+    // === Getters & Setters ===
+
+    public Subject getSubject() { return subject; }
+    public void setSubject(Subject subject) { this.subject = subject; }
+
+    public List<ComparableProperty> getComparables() { return comparables; }
+    public void setComparables(List<ComparableProperty> comparables) { this.comparables = comparables; }
+
+    public Pricing getPricing() { return pricing; }
+    public void setPricing(Pricing pricing) { this.pricing = pricing; }
+
+    public String getAgentName() { return agentName; }
+    public void setAgentName(String agentName) { this.agentName = agentName; }
+
+    public String getAgentTitle() { return agentTitle; }
+    public void setAgentTitle(String agentTitle) { this.agentTitle = agentTitle; }
+
+    public String getAgentPhone() { return agentPhone; }
+    public void setAgentPhone(String agentPhone) { this.agentPhone = agentPhone; }
+
+    public String getAgentEmail() { return agentEmail; }
+    public void setAgentEmail(String agentEmail) { this.agentEmail = agentEmail; }
+
+    public String getAgencyName() { return agencyName; }
+    public void setAgencyName(String agencyName) { this.agencyName = agencyName; }
+
+    public String getAgencyAddress() { return agencyAddress; }
+    public void setAgencyAddress(String agencyAddress) { this.agencyAddress = agencyAddress; }
+
+    public String getAgentWebsite() { return agentWebsite; }
+    public void setAgentWebsite(String agentWebsite) { this.agentWebsite = agentWebsite; }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/model/Subject.java
+----------------------------------------
+package cz.stabuilder.model;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Předmět prodeje — nemovitost, pro kterou se STA připravuje.
+ */
+public class Subject {
+
+    private LocalDate date;
+    private String clientName;
+    private String disposition;
+    private String ownership;
+    private int areaSqm;
+    private String extras;
+    private String address;
+    private String description;
+    private List<String> photoFilenames = new ArrayList<>();
+
+    public Subject() {
+        this.date = LocalDate.now();
+        this.ownership = "OV";
+    }
+
+    /** Plocha jako String pro PDF šablonu. */
+    public String getArea() {
+        return String.valueOf(areaSqm);
+    }
+
+    // --- Getters & Setters ---
+
+    public LocalDate getDate() { return date; }
+    public void setDate(LocalDate date) { this.date = date; }
+
+    public String getClientName() { return clientName; }
+    public void setClientName(String clientName) { this.clientName = clientName; }
+
+    public String getDisposition() { return disposition; }
+    public void setDisposition(String disposition) { this.disposition = disposition; }
+
+    public String getOwnership() { return ownership; }
+    public void setOwnership(String ownership) { this.ownership = ownership; }
+
+    public int getAreaSqm() { return areaSqm; }
+    public void setAreaSqm(int areaSqm) { this.areaSqm = areaSqm; }
+
+    public String getExtras() { return extras; }
+    public void setExtras(String extras) { this.extras = extras; }
+
+    public String getAddress() { return address; }
+    public void setAddress(String address) { this.address = address; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
+    public List<String> getPhotoFilenames() { return photoFilenames; }
+    public void setPhotoFilenames(List<String> photoFilenames) { this.photoFilenames = photoFilenames; }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/DocxContentBuilder.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.Pricing;
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.model.Subject;
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTRPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTShd;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STShd;
+
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Generuje obsahové sekce DOCX: titulní stranu, srovnatelné nemovitosti,
+ * cenové doporučení a patičku s kontaktem.
+ */
+public class DocxContentBuilder {
+
+    private final DocxPhotoHelper photoHelper;
+
+    public DocxContentBuilder(DocxPhotoHelper photoHelper) {
+        this.photoHelper = photoHelper;
+    }
+
+    // ==================== TITLE PAGE ====================
+
+    public void addTitlePage(XWPFDocument doc, StaProject project) {
+        Subject subject = project.getSubject();
+
+        addEmptyLines(doc, 2);
+
+        // Hlavní nadpis
+        XWPFParagraph titleP = doc.createParagraph();
+        titleP.setAlignment(ParagraphAlignment.CENTER);
+        titleP.setSpacingAfter(400);
+        addStyledRun(titleP, "SROVNÁVACÍ TRŽNÍ ANALÝZA", 28, true, COLOR_PRIMARY);
+
+        // Datum
+        if (subject.getDate() != null) {
+            XWPFParagraph dateP = doc.createParagraph();
+            dateP.setAlignment(ParagraphAlignment.CENTER);
+            dateP.setSpacingAfter(400);
+            addStyledRun(dateP, subject.getDate().format(DateTimeFormatter.ofPattern("d.M.yyyy")), 14, true, null);
+        }
+
+        // Klient
+        addLabelValue(doc, "Vypracováno pro: ", safe(subject.getClientName()), 12);
+
+        // Předmět prodeje
+        addLabelValue(doc, "Předmět prodeje: ", buildSubjectLine(subject), 11);
+
+        // Adresa
+        addLabelValue(doc, "Adresa: ", safe(subject.getAddress()), 11);
+
+        addEmptyLines(doc, 1);
+
+        // Popis nemovitosti
+        if (subject.getDescription() != null && !subject.getDescription().isBlank()) {
+            addSubHeading(doc, "Popis nemovitosti:");
+            for (String line : subject.getDescription().split("\n")) {
+                if (!line.isBlank()) {
+                    XWPFParagraph p = doc.createParagraph();
+                    p.setSpacingAfter(60);
+                    addStyledRun(p, line.trim(), 10, false, COLOR_GRAY);
+                }
+            }
+        }
+    }
+
+    // ==================== SUBJECT PHOTOS ====================
+
+    public void addSubjectPhotosPage(XWPFDocument doc, Subject subject) {
+        addSubHeading(doc, "Fotky pracovní");
+        photoHelper.addPhotoGrid(doc, subject.getPhotoFilenames());
+    }
+
+    // ==================== COMPARABLE SECTION ====================
+
+    public void addComparableSection(XWPFDocument doc, ComparableProperty comp, boolean isSold) {
+        // Nadpis
+        String heading = String.format("Byt %s, %s m², ul. %s, %s – %s",
+                safe(comp.getDisposition()), comp.getArea(),
+                safe(comp.getStreet()), safe(comp.getCity()), safe(comp.getDistrict()));
+
+        XWPFParagraph headP = doc.createParagraph();
+        headP.setSpacingBefore(200);
+        headP.setSpacingAfter(100);
+        addStyledRun(headP, heading, 13, true, COLOR_PRIMARY);
+
+        // Cena
+        String priceText;
+        if (isSold) {
+            priceText = "Prodáno za " + comp.getFormattedPrice();
+            if (comp.getSoldDate() != null && !comp.getSoldDate().isBlank())
+                priceText += " v " + comp.getSoldDate();
+            if (comp.getSoldDuration() != null && !comp.getSoldDuration().isBlank())
+                priceText += " za " + comp.getSoldDuration();
+        } else {
+            priceText = comp.getFormattedPrice();
+        }
+
+        XWPFParagraph priceP = doc.createParagraph();
+        priceP.setSpacingAfter(200);
+        addStyledRun(priceP, priceText, 14, true, isSold ? COLOR_GREEN : COLOR_ACCENT);
+
+        // Fotky
+        if (!comp.getPhotoFilenames().isEmpty()) {
+            photoHelper.addPhotoGrid(doc, comp.getPhotoFilenames());
+        }
+
+        // Popis se zvýrazněním
+        if (comp.getDescriptionText() != null && !comp.getDescriptionText().isBlank()) {
+            addDescriptionWithHighlights(doc, comp.getDescriptionText(), comp.getHighlights());
+        }
+
+        // Zpětná vazba
+        if (comp.getBrokerFeedback() != null && !comp.getBrokerFeedback().isBlank()) {
+            addEmptyLines(doc, 1);
+            XWPFParagraph fbP = doc.createParagraph();
+            fbP.setSpacingBefore(120);
+
+            XWPFRun labelRun = addStyledRun(fbP, "Zpětná vazba od makléře: ", 10, true, null);
+            labelRun.setUnderline(UnderlinePatterns.SINGLE);
+
+            XWPFRun textRun = addStyledRun(fbP, comp.getBrokerFeedback(), 10, false, COLOR_GRAY);
+            textRun.setItalic(true);
+        }
+    }
+
+    // ==================== PRICING PAGE ====================
+
+    public void addPricingPage(XWPFDocument doc, StaProject project) {
+        Pricing pricing = project.getPricing();
+
+        addSectionHeading(doc, "Návrh pásma prodejní ceny Vaší nemovitosti");
+
+        // Klady
+        List<String> positives = pricing.getPositivesList();
+        if (!positives.isEmpty()) {
+            addSubHeading(doc, "Kladné stránky nemovitosti:");
+            positives.forEach(item -> addBulletItem(doc, item));
+        }
+
+        // Zápory
+        List<String> negatives = pricing.getNegativesList();
+        if (!negatives.isEmpty()) {
+            addEmptyLines(doc, 1);
+            addSubHeading(doc, "Záporné stránky nemovitosti:");
+            negatives.forEach(item -> addBulletItem(doc, item));
+        }
+
+        // Doporučení
+        if (pricing.getRecommendation() != null && !pricing.getRecommendation().isBlank()) {
+            addEmptyLines(doc, 1);
+            addSubHeading(doc, "Doporučení:");
+            addBulletItem(doc, pricing.getRecommendation());
+        }
+
+        addEmptyLines(doc, 1);
+
+        // Úvodní text
+        XWPFParagraph introP = doc.createParagraph();
+        introP.setSpacingAfter(100);
+        addStyledRun(introP, "Vzhledem k výše uvedeným skutečnostem a nabídkám v dané lokalitě "
+                + "doporučuji cenové rozmezí pro prodej Vaší nemovitosti", 11, false, null);
+
+        // Cenové rozmezí
+        String range = pricing.getFormattedRange();
+        if (!range.isBlank()) {
+            XWPFParagraph rangeP = doc.createParagraph();
+            rangeP.setAlignment(ParagraphAlignment.CENTER);
+            rangeP.setSpacingBefore(200);
+            rangeP.setSpacingAfter(200);
+            addStyledRun(rangeP, range, 16, true, COLOR_PRIMARY);
+        }
+
+        // Počáteční cena
+        if (pricing.getStartPrice() > 0) {
+            XWPFParagraph startP = doc.createParagraph();
+            startP.setSpacingBefore(100);
+            addStyledRun(startP, "Jako ", 11, false, null);
+
+            XWPFRun boldRun = addStyledRun(startP,
+                    "počáteční prodejní cenu navrhuji začít s cenou " + pricing.getFormattedStartPrice(),
+                    11, true, null);
+            boldRun.setUnderline(UnderlinePatterns.SINGLE);
+
+            addStyledRun(startP, " s případným postupným upravováním.", 11, false, null);
+        }
+    }
+
+    // ==================== AGENT FOOTER ====================
+
+    public void addAgentFooter(XWPFDocument doc, StaProject project) {
+        addEmptyLines(doc, 2);
+
+        XWPFParagraph labelP = doc.createParagraph();
+        XWPFRun labelRun = addStyledRun(labelP, "Vypracoval", 10, false, COLOR_GRAY);
+        labelRun.setItalic(true);
+
+        addEmptyLines(doc, 1);
+
+        // Kontaktní tabulka
+        XWPFTable footerTable = doc.createTable(1, 2);
+        footerTable.setWidth(CONTENT_WIDTH + "");
+        setTableBordersNone(footerTable);
+
+        XWPFTableRow row = footerTable.getRow(0);
+
+        // Levý sloupec — kontakt
+        XWPFTableCell leftCell = row.getCell(0);
+        setCellWidth(leftCell, CONTENT_WIDTH / 2);
+
+        addContactLine(leftCell.getParagraphArray(0), safe(project.getAgentName()), true, 12, COLOR_BLACK);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgentTitle()), false, 10, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), "M: " + safe(project.getAgentPhone()), false, 9, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), "E: " + safe(project.getAgentEmail()), false, 9, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgencyName()), true, 10, COLOR_BLACK);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgencyAddress()), false, 8, COLOR_GRAY);
+        addContactLine(leftCell.addParagraph(), safe(project.getAgentWebsite()), false, 9, COLOR_PRIMARY);
+
+        // Pravý sloupec — logo placeholder
+        XWPFTableCell rightCell = row.getCell(1);
+        setCellWidth(rightCell, CONTENT_WIDTH / 2);
+        XWPFParagraph logoP = rightCell.getParagraphArray(0);
+        if (logoP == null) logoP = rightCell.addParagraph();
+        logoP.setAlignment(ParagraphAlignment.RIGHT);
+        XWPFRun logoRun = addStyledRun(logoP, "[Logo placeholder]", 9, false, COLOR_GRAY);
+        logoRun.setItalic(true);
+    }
+
+    // ==================== PRIVATE HELPERS ====================
+
+    private void addDescriptionWithHighlights(XWPFDocument doc, String text, List<String> highlights) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(100);
+        p.setSpacingAfter(100);
+
+        if (highlights == null || highlights.isEmpty()) {
+            addStyledRun(p, text, 9, false, COLOR_GRAY);
+            return;
+        }
+
+        String remaining = text;
+        for (String highlight : highlights) {
+            if (highlight == null || highlight.isBlank()) continue;
+            int idx = remaining.toLowerCase().indexOf(highlight.toLowerCase());
+            if (idx >= 0) {
+                if (idx > 0) {
+                    addStyledRun(p, remaining.substring(0, idx), 9, false, COLOR_GRAY);
+                }
+                XWPFRun hlRun = addStyledRun(p, remaining.substring(idx, idx + highlight.length()), 9, true, COLOR_BLACK);
+                setRunHighlight(hlRun, COLOR_HIGHLIGHT);
+                remaining = remaining.substring(idx + highlight.length());
+            }
+        }
+        if (!remaining.isEmpty()) {
+            addStyledRun(p, remaining, 9, false, COLOR_GRAY);
+        }
+    }
+
+    private String buildSubjectLine(Subject s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("byt ").append(safe(s.getDisposition()));
+        if (s.getOwnership() != null && !s.getOwnership().isBlank()) sb.append(", ").append(s.getOwnership());
+        if (s.getAreaSqm() > 0) sb.append(", ").append(s.getAreaSqm()).append(" m²");
+        if (s.getExtras() != null && !s.getExtras().isBlank()) sb.append(" + ").append(s.getExtras());
+        return sb.toString();
+    }
+
+    private void addSectionHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(200);
+        p.setSpacingAfter(200);
+        p.setBorderBottom(Borders.SINGLE);
+        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
+    }
+
+    private void addSubHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(120);
+        p.setSpacingAfter(80);
+        XWPFRun run = addStyledRun(p, text, 11, true, null);
+        run.setUnderline(UnderlinePatterns.SINGLE);
+    }
+
+    private void addLabelValue(XWPFDocument doc, String label, String value, int fontSize) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingAfter(80);
+        addStyledRun(p, label, fontSize, true, null);
+        addStyledRun(p, value, fontSize, false, null);
+    }
+
+    private void addBulletItem(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setIndentationLeft(720);
+        p.setSpacingAfter(40);
+        addStyledRun(p, "•  " + text, 10, false, null);
+    }
+
+    private void addContactLine(XWPFParagraph p, String text, boolean bold, int size, String color) {
+        if (p == null) return;
+        addStyledRun(p, text, size, bold, color);
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/DocxExportService.java
+----------------------------------------
+package cz.stabuilder.service;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.service.docx.DocxContentBuilder;
+import cz.stabuilder.service.docx.DocxPhotoHelper;
+import cz.stabuilder.service.docx.DocxStyleHelper;
+import cz.stabuilder.service.docx.DocxTableBuilder;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.springframework.stereotype.Service;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.List;
+
+/**
+ * Hlavní služba pro generování DOCX Srovnávací tržní analýzy.
+ * Deleguje na specializované buildery.
+ */
+@Service
+public class DocxExportService {
+
+    private final DocxContentBuilder contentBuilder;
+
+    public DocxExportService(PhotoService photoService) {
+        DocxPhotoHelper photoHelper = new DocxPhotoHelper(photoService);
+        this.contentBuilder = new DocxContentBuilder(photoHelper);
+    }
+
+    /**
+     * Vygeneruje kompletní DOCX a vrátí jako byte[].
+     */
+    public byte[] generateDocx(StaProject project) throws IOException {
+        XWPFDocument doc = new XWPFDocument();
+
+        // Nastavení stránky A4
+        DocxStyleHelper.setupPageLayout(doc);
+
+        // Titulní strana
+        contentBuilder.addTitlePage(doc, project);
+
+        // Fotky předmětu prodeje
+        if (!project.getSubject().getPhotoFilenames().isEmpty()) {
+            DocxStyleHelper.addPageBreak(doc);
+            contentBuilder.addSubjectPhotosPage(doc, project.getSubject());
+        }
+
+        // Srovnatelné nemovitosti — v nabídce
+        List<ComparableProperty> offers = project.getOffers();
+        if (!offers.isEmpty()) {
+            DocxStyleHelper.addPageBreak(doc);
+            addSectionHeading(doc, "Podobné nabídky aktuálně v prodeji");
+            for (int i = 0; i < offers.size(); i++) {
+                if (i > 0) DocxStyleHelper.addPageBreak(doc);
+                contentBuilder.addComparableSection(doc, offers.get(i), false);
+            }
+        }
+
+        // Srovnatelné nemovitosti — prodané
+        List<ComparableProperty> sold = project.getSold();
+        if (!sold.isEmpty()) {
+            DocxStyleHelper.addPageBreak(doc);
+            addSectionHeading(doc, "Nedávno prodané nemovitosti");
+            for (int i = 0; i < sold.size(); i++) {
+                if (i > 0) DocxStyleHelper.addPageBreak(doc);
+                contentBuilder.addComparableSection(doc, sold.get(i), true);
+            }
+        }
+
+        // Srovnávací tabulka
+        if (!project.getComparables().isEmpty()) {
+            DocxStyleHelper.addPageBreak(doc);
+            DocxTableBuilder.addComparisonTable(doc, project);
+        }
+
+        // Cenové doporučení
+        DocxStyleHelper.addPageBreak(doc);
+        contentBuilder.addPricingPage(doc, project);
+
+        // Patička s kontaktem
+        contentBuilder.addAgentFooter(doc, project);
+
+        // Export
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        doc.write(out);
+        doc.close();
+        return out.toByteArray();
+    }
+
+    private void addSectionHeading(XWPFDocument doc, String text) {
+        var p = doc.createParagraph();
+        p.setSpacingBefore(200);
+        p.setSpacingAfter(200);
+        p.setBorderBottom(org.apache.poi.xwpf.usermodel.Borders.SINGLE);
+        DocxStyleHelper.addStyledRun(p, text, 16, true, DocxStyleHelper.COLOR_PRIMARY);
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/DocxPhotoHelper.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.service.PhotoService;
+import org.apache.poi.xwpf.usermodel.*;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Vkládání fotek do DOCX — grid 3×2 s automatickým škálováním.
+ */
+public class DocxPhotoHelper {
+
+    private final PhotoService photoService;
+
+    public DocxPhotoHelper(PhotoService photoService) {
+        this.photoService = photoService;
+    }
+
+    /**
+     * Přidá grid fotek (3 sloupce) do dokumentu.
+     */
+    public void addPhotoGrid(XWPFDocument doc, List<String> filenames) {
+        if (filenames.isEmpty()) return;
+
+        int cols = 3;
+        int colWidthDxa = CONTENT_WIDTH / cols;
+
+        for (int rowStart = 0; rowStart < filenames.size(); rowStart += cols) {
+            int rowEnd = Math.min(rowStart + cols, filenames.size());
+            int cellCount = rowEnd - rowStart;
+
+            XWPFTable photoTable = doc.createTable(1, cols);
+            photoTable.setWidth(CONTENT_WIDTH + "");
+            setTableBordersNone(photoTable);
+
+            XWPFTableRow row = photoTable.getRow(0);
+
+            for (int i = 0; i < cols; i++) {
+                XWPFTableCell cell = row.getCell(i);
+                setCellWidth(cell, colWidthDxa);
+                setCellMargins(cell, 40, 40, 40, 40);
+
+                if (i < cellCount) {
+                    addPhotoToCell(cell, filenames.get(rowStart + i), colWidthDxa - 120);
+                } else {
+                    cell.setText("");
+                }
+            }
+
+            // Spacing po tabulce
+            XWPFParagraph spacer = doc.createParagraph();
+            spacer.setSpacingAfter(40);
+        }
+    }
+
+    /**
+     * Vloží fotku do buňky tabulky se správným škálováním.
+     */
+    private void addPhotoToCell(XWPFTableCell cell, String filename, int maxWidthDxa) {
+        try {
+            byte[] imageBytes = photoService.getPhotoBytes(filename);
+
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageBytes));
+            if (img == null) {
+                cell.setText("[" + filename + "]");
+                return;
+            }
+
+            int imgW = img.getWidth();
+            int imgH = img.getHeight();
+
+            // 1 DXA = 635 EMU
+            long maxWidthEmu = (long) maxWidthDxa * 635;
+            long targetWidthEmu = maxWidthEmu;
+            long targetHeightEmu = (long) ((double) imgH / imgW * targetWidthEmu);
+
+            // Max výška 5cm (1cm = 360000 EMU)
+            long maxHeightEmu = 5 * 360000L;
+            if (targetHeightEmu > maxHeightEmu) {
+                targetHeightEmu = maxHeightEmu;
+                targetWidthEmu = (long) ((double) imgW / imgH * targetHeightEmu);
+            }
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+            p.setAlignment(ParagraphAlignment.CENTER);
+            XWPFRun run = p.createRun();
+
+            String lower = filename.toLowerCase();
+            int picType = lower.endsWith(".png") ? XWPFDocument.PICTURE_TYPE_PNG : XWPFDocument.PICTURE_TYPE_JPEG;
+
+            run.addPicture(new ByteArrayInputStream(imageBytes), picType, filename,
+                    targetWidthEmu, targetHeightEmu);
+
+        } catch (Exception e) {
+            cell.setText("[Fotka: " + filename + "]");
+        }
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/DocxStyleHelper.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
+
+import java.math.BigInteger;
+
+/**
+ * Pomocné metody pro formátování DOCX — barvy, okraje, buňky, fonty.
+ */
+public class DocxStyleHelper {
+
+    // Barvy (hex bez #)
+    public static final String COLOR_PRIMARY = "003865";
+    public static final String COLOR_ACCENT = "C8102E";
+    public static final String COLOR_LIGHT_BLUE = "D5E8F0";
+    public static final String COLOR_TABLE_HEADER = "003865";
+    public static final String COLOR_OFFER_BG = "DCE7F5";
+    public static final String COLOR_SOLD_BG = "D5F0D5";
+    public static final String COLOR_HIGHLIGHT = "FFFF99";
+    public static final String COLOR_GRAY = "666666";
+    public static final String COLOR_WHITE = "FFFFFF";
+    public static final String COLOR_BLACK = "000000";
+    public static final String COLOR_GREEN = "2E7D32";
+
+    // Rozměry A4 v DXA
+    public static final int PAGE_WIDTH = 11906;
+    public static final int PAGE_HEIGHT = 16838;
+    public static final int MARGIN = 1134;
+    public static final int CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
+
+    public static final String FONT = "Arial";
+
+    private DocxStyleHelper() {}
+
+    // === Stránka ===
+
+    public static void setupPageLayout(XWPFDocument doc) {
+        CTDocument1 ctDoc = doc.getDocument();
+        CTBody ctBody = ctDoc.getBody();
+        if (ctBody == null) ctBody = ctDoc.addNewBody();
+        CTSectPr sectPr = ctBody.isSetSectPr() ? ctBody.getSectPr() : ctBody.addNewSectPr();
+
+        CTPageSz pgSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
+        pgSz.setW(BigInteger.valueOf(PAGE_WIDTH));
+        pgSz.setH(BigInteger.valueOf(PAGE_HEIGHT));
+
+        CTPageMar pgMar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
+        pgMar.setTop(BigInteger.valueOf(MARGIN));
+        pgMar.setBottom(BigInteger.valueOf(MARGIN));
+        pgMar.setLeft(BigInteger.valueOf(MARGIN));
+        pgMar.setRight(BigInteger.valueOf(MARGIN));
+    }
+
+    // === Buňky tabulky ===
+
+    public static void setCellWidth(XWPFTableCell cell, int widthDxa) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTTblWidth w = tcPr.isSetTcW() ? tcPr.getTcW() : tcPr.addNewTcW();
+        w.setType(STTblWidth.DXA);
+        w.setW(BigInteger.valueOf(widthDxa));
+    }
+
+    public static void setCellColor(XWPFTableCell cell, String hexColor) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTShd shd = tcPr.isSetShd() ? tcPr.getShd() : tcPr.addNewShd();
+        shd.setVal(STShd.CLEAR);
+        shd.setFill(hexColor);
+    }
+
+    public static void setCellMargins(XWPFTableCell cell, int top, int left, int bottom, int right) {
+        CTTcPr tcPr = getOrCreateTcPr(cell);
+        CTTcMar mar = tcPr.isSetTcMar() ? tcPr.getTcMar() : tcPr.addNewTcMar();
+
+        setMarginValue(mar.isSetTop() ? mar.getTop() : mar.addNewTop(), top);
+        setMarginValue(mar.isSetLeft() ? mar.getLeft() : mar.addNewLeft(), left);
+        setMarginValue(mar.isSetBottom() ? mar.getBottom() : mar.addNewBottom(), bottom);
+        setMarginValue(mar.isSetRight() ? mar.getRight() : mar.addNewRight(), right);
+    }
+
+    // === Okraje tabulky ===
+
+    public static void setTableBordersNone(XWPFTable table) {
+        CTTblBorders borders = getOrCreateTableBorders(table);
+        setBorderNone(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
+        setBorderNone(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
+        setBorderNone(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
+        setBorderNone(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
+        setBorderNone(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
+        setBorderNone(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
+    }
+
+    public static void setTableBordersThin(XWPFTable table) {
+        CTTblBorders borders = getOrCreateTableBorders(table);
+        setBorderThin(borders.isSetTop() ? borders.getTop() : borders.addNewTop());
+        setBorderThin(borders.isSetBottom() ? borders.getBottom() : borders.addNewBottom());
+        setBorderThin(borders.isSetLeft() ? borders.getLeft() : borders.addNewLeft());
+        setBorderThin(borders.isSetRight() ? borders.getRight() : borders.addNewRight());
+        setBorderThin(borders.isSetInsideH() ? borders.getInsideH() : borders.addNewInsideH());
+        setBorderThin(borders.isSetInsideV() ? borders.getInsideV() : borders.addNewInsideV());
+    }
+
+    // === Zvýraznění textu (žluté pozadí) ===
+
+    public static void setRunHighlight(XWPFRun run, String bgColor) {
+        CTRPr rpr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
+        CTShd shd = rpr.isSetShd() ? rpr.getShd() : rpr.addNewShd();
+        shd.setVal(STShd.CLEAR);
+        shd.setFill(bgColor);
+    }
+
+    // === Textové helpery ===
+
+    public static XWPFRun addStyledRun(XWPFParagraph p, String text, int fontSize, boolean bold, String color) {
+        XWPFRun run = p.createRun();
+        run.setText(text);
+        run.setFontSize(fontSize);
+        run.setFontFamily(FONT);
+        run.setBold(bold);
+        if (color != null) run.setColor(color);
+        return run;
+    }
+
+    public static void addPageBreak(XWPFDocument doc) {
+        XWPFParagraph p = doc.createParagraph();
+        p.createRun().addBreak(BreakType.PAGE);
+    }
+
+    public static void addEmptyLines(XWPFDocument doc, int count) {
+        for (int i = 0; i < count; i++) {
+            XWPFParagraph p = doc.createParagraph();
+            p.setSpacingAfter(80);
+        }
+    }
+
+    public static String safe(String s) {
+        return s != null ? s : "";
+    }
+
+    // === Private ===
+
+    private static CTTcPr getOrCreateTcPr(XWPFTableCell cell) {
+        return cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+    }
+
+    private static CTTblBorders getOrCreateTableBorders(XWPFTable table) {
+        CTTblPr tblPr = table.getCTTbl().getTblPr();
+        if (tblPr == null) tblPr = table.getCTTbl().addNewTblPr();
+        return tblPr.isSetTblBorders() ? tblPr.getTblBorders() : tblPr.addNewTblBorders();
+    }
+
+    private static void setMarginValue(CTTblWidth tw, int value) {
+        tw.setType(STTblWidth.DXA);
+        tw.setW(BigInteger.valueOf(value));
+    }
+
+    private static void setBorderNone(CTBorder border) {
+        border.setVal(STBorder.NONE);
+        border.setSz(BigInteger.ZERO);
+        border.setSpace(BigInteger.ZERO);
+        border.setColor("FFFFFF");
+    }
+
+    private static void setBorderThin(CTBorder border) {
+        border.setVal(STBorder.SINGLE);
+        border.setSz(BigInteger.valueOf(4));
+        border.setSpace(BigInteger.ZERO);
+        border.setColor("CCCCCC");
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/DocxTableBuilder.java
+----------------------------------------
+package cz.stabuilder.service.docx;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.StaProject;
+import org.apache.poi.xwpf.usermodel.*;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge;
+
+import java.math.BigInteger;
+import java.util.List;
+
+import static cz.stabuilder.service.docx.DocxStyleHelper.*;
+
+/**
+ * Generuje srovnávací tabulku nemovitostí v DOCX.
+ */
+public class DocxTableBuilder {
+
+    private static final int[] COL_WIDTHS = {2800, 2000, 1800, 3038};
+
+    private DocxTableBuilder() {}
+
+    /**
+     * Přidá kompletní srovnávací tabulku do dokumentu.
+     */
+    public static void addComparisonTable(XWPFDocument doc, StaProject project) {
+        addSectionHeading(doc, "Nabízené / prodané byty – srovnání");
+
+        // Podnadpis
+        XWPFParagraph subP = doc.createParagraph();
+        subP.setSpacingAfter(200);
+        XWPFRun subRun = subP.createRun();
+        subRun.setText("Porovnatelné panelové byty v lokalitě " + safe(project.getSubject().getAddress()));
+        subRun.setFontSize(10);
+        subRun.setFontFamily(FONT);
+        subRun.setColor(COLOR_GRAY);
+        subRun.setItalic(true);
+
+        List<ComparableProperty> offers = project.getOffers();
+        List<ComparableProperty> sold = project.getSold();
+
+        int totalRows = 1;
+        if (!offers.isEmpty()) totalRows += 1 + offers.size();
+        if (!sold.isEmpty()) totalRows += 1 + sold.size();
+
+        XWPFTable table = doc.createTable(totalRows, 4);
+        table.setWidth(CONTENT_WIDTH + "");
+
+        addHeaderRow(table);
+
+        int row = 1;
+        if (!offers.isEmpty()) {
+            addCategoryRow(table, row, "Nabídka", COLOR_OFFER_BG);
+            row++;
+            for (ComparableProperty c : offers) {
+                addDataRow(table, row, c, false);
+                row++;
+            }
+        }
+        if (!sold.isEmpty()) {
+            addCategoryRow(table, row, "Prodáno", COLOR_SOLD_BG);
+            row++;
+            for (ComparableProperty c : sold) {
+                addDataRow(table, row, c, true);
+                row++;
+            }
+        }
+
+        setTableBordersThin(table);
+    }
+
+    // === Header ===
+
+    private static void addHeaderRow(XWPFTable table) {
+        XWPFTableRow headerRow = table.getRow(0);
+        String[] headers = {"Lokalita", "Prodejní cena", "Cena za m²", "Výhody / Nevýhody"};
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = headerRow.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellColor(cell, COLOR_TABLE_HEADER);
+            setCellMargins(cell, 60, 80, 60, 80);
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+            addStyledRun(p, headers[i], 9, true, COLOR_WHITE);
+        }
+    }
+
+    // === Category row (Nabídka / Prodáno) ===
+
+    private static void addCategoryRow(XWPFTable table, int rowIdx, String label, String bgColor) {
+        XWPFTableRow row = table.getRow(rowIdx);
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = row.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellColor(cell, bgColor);
+            setCellMargins(cell, 40, 60, 40, 60);
+
+            CTTcPr tcPr = cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+            if (i == 0) {
+                tcPr.addNewGridSpan().setVal(BigInteger.valueOf(4));
+                XWPFParagraph p = cell.getParagraphArray(0);
+                if (p == null) p = cell.addParagraph();
+                addStyledRun(p, label, 9, true, COLOR_PRIMARY);
+            } else {
+                tcPr.addNewHMerge().setVal(STMerge.CONTINUE);
+            }
+        }
+    }
+
+    // === Data row ===
+
+    private static void addDataRow(XWPFTable table, int rowIdx, ComparableProperty c, boolean isSold) {
+        XWPFTableRow row = table.getRow(rowIdx);
+
+        for (int i = 0; i < 4; i++) {
+            XWPFTableCell cell = row.getCell(i);
+            setCellWidth(cell, COL_WIDTHS[i]);
+            setCellMargins(cell, 40, 60, 40, 60);
+
+            XWPFParagraph p = cell.getParagraphArray(0);
+            if (p == null) p = cell.addParagraph();
+
+            switch (i) {
+                case 0 -> addLocalityCell(p, c);
+                case 1 -> addStyledRun(p, c.getFormattedPrice(), 9, true, null);
+                case 2 -> addStyledRun(p, c.getFormattedPricePerSqm(), 9, true, null);
+                case 3 -> addDetailsCell(p, c, isSold);
+            }
+        }
+    }
+
+    private static void addLocalityCell(XWPFParagraph p, ComparableProperty c) {
+        XWPFRun streetRun = addStyledRun(p, safe(c.getStreet()) + ",", 9, true, null);
+        streetRun.addBreak();
+        addStyledRun(p, safe(c.getDisposition()) + ", " + c.getArea() + " m²", 8, false, COLOR_GRAY);
+    }
+
+    private static void addDetailsCell(XWPFParagraph p, ComparableProperty c, boolean isSold) {
+        StringBuilder details = new StringBuilder();
+        if (c.getFloor() != null && !c.getFloor().isBlank()) details.append(c.getFloor());
+        if (c.getExtras() != null && !c.getExtras().isBlank()) {
+            if (!details.isEmpty()) details.append(", ");
+            details.append(c.getExtras());
+        }
+        if (c.getCondition() != null && !c.getCondition().isBlank()) {
+            if (!details.isEmpty()) details.append(", ");
+            details.append(c.getCondition());
+        }
+
+        addStyledRun(p, details.toString(), 8, false, null);
+
+        if (isSold && c.getSoldDate() != null && !c.getSoldDate().isBlank()) {
+            p.createRun().addBreak();
+            String soldText = "Prodáno v " + c.getSoldDate();
+            if (c.getSoldDuration() != null && !c.getSoldDuration().isBlank()) {
+                soldText += " za " + c.getSoldDuration();
+            }
+            addStyledRun(p, soldText, 8, true, COLOR_GREEN);
+        }
+    }
+
+    // === Section heading ===
+
+    private static void addSectionHeading(XWPFDocument doc, String text) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingBefore(200);
+        p.setSpacingAfter(200);
+        p.setBorderBottom(Borders.SINGLE);
+        addStyledRun(p, text, 16, true, COLOR_PRIMARY);
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/PdfExportService.java
+----------------------------------------
+package cz.stabuilder.service;
+
+import com.itextpdf.io.font.PdfEncodings;
+import com.itextpdf.io.image.ImageDataFactory;
+import com.itextpdf.kernel.colors.ColorConstants;
+import com.itextpdf.kernel.colors.DeviceRgb;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.font.PdfFontFactory;
+import com.itextpdf.kernel.geom.PageSize;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfWriter;
+import com.itextpdf.layout.Document;
+import com.itextpdf.layout.borders.Border;
+import com.itextpdf.layout.borders.SolidBorder;
+import com.itextpdf.layout.element.*;
+import com.itextpdf.layout.element.Cell;
+import com.itextpdf.layout.element.Image;
+import com.itextpdf.layout.element.Table;
+import com.itextpdf.layout.properties.HorizontalAlignment;
+import com.itextpdf.layout.properties.TextAlignment;
+import com.itextpdf.layout.properties.UnitValue;
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.Pricing;
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.model.Subject;
+import org.springframework.stereotype.Service;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+
+@Service
+public class PdfExportService {
+
+    private static final DeviceRgb COLOR_PRIMARY = new DeviceRgb(0, 56, 101);
+    private static final DeviceRgb COLOR_ACCENT = new DeviceRgb(200, 16, 46);
+    private static final DeviceRgb COLOR_TABLE_HEADER = new DeviceRgb(0, 56, 101);
+    private static final DeviceRgb COLOR_TABLE_OFFER = new DeviceRgb(220, 235, 250);
+    private static final DeviceRgb COLOR_TABLE_SOLD = new DeviceRgb(220, 245, 220);
+    private static final DeviceRgb COLOR_HIGHLIGHT = new DeviceRgb(255, 255, 150);
+    private static final DeviceRgb COLOR_GRAY = new DeviceRgb(100, 100, 100);
+
+    private final PhotoService photoService;
+
+    public PdfExportService(PhotoService photoService) {
+        this.photoService = photoService;
+    }
+
+    public byte[] generatePdf(StaProject project) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PdfWriter writer = new PdfWriter(baos);
+        PdfDocument pdf = new PdfDocument(writer);
+        Document doc = new Document(pdf, PageSize.A4);
+        doc.setMargins(40, 40, 40, 40);
+
+        PdfFont fontRegular = PdfFontFactory.createFont("Helvetica", PdfEncodings.CP1250);
+        PdfFont fontBold = PdfFontFactory.createFont("Helvetica-Bold", PdfEncodings.CP1250);
+        doc.setFont(fontRegular);
+        doc.setFontSize(10);
+
+        addTitlePage(doc, project, fontRegular, fontBold);
+
+        if (!project.getSubject().getPhotoFilenames().isEmpty()) {
+            doc.add(new AreaBreak());
+            addSubjectPhotosPage(doc, project.getSubject(), fontBold);
+        }
+
+        List<ComparableProperty> offers = project.getOffers();
+        List<ComparableProperty> sold = project.getSold();
+
+        if (!offers.isEmpty()) {
+            doc.add(new AreaBreak());
+            addSectionTitle(doc, "Podobné nabídky aktuálně v prodeji", fontBold);
+            for (ComparableProperty comp : offers) {
+                addComparablePage(doc, comp, fontRegular, fontBold, false);
+            }
+        }
+
+        if (!sold.isEmpty()) {
+            doc.add(new AreaBreak());
+            addSectionTitle(doc, "Nedávno prodané nemovitosti", fontBold);
+            for (ComparableProperty comp : sold) {
+                addComparablePage(doc, comp, fontRegular, fontBold, true);
+            }
+        }
+
+        if (!project.getComparables().isEmpty()) {
+            doc.add(new AreaBreak());
+            addComparisonTable(doc, project, fontRegular, fontBold);
+        }
+
+        doc.add(new AreaBreak());
+        addPricingPage(doc, project, fontRegular, fontBold);
+        addAgentFooter(doc, project, fontRegular, fontBold);
+
+        doc.close();
+        return baos.toByteArray();
+    }
+
+    // === TITLE PAGE ===
+
+    private void addTitlePage(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
+        Subject subject = project.getSubject();
+        doc.add(new Paragraph("\n\n\n"));
+        doc.add(new Paragraph("SROVNÁVACÍ TRŽNÍ ANALÝZA")
+                .setFont(fontBold).setFontSize(26).setFontColor(COLOR_PRIMARY)
+                .setTextAlignment(TextAlignment.CENTER));
+        doc.add(new Paragraph("\n"));
+
+        String dateStr = subject.getDate() != null
+                ? subject.getDate().format(DateTimeFormatter.ofPattern("d.M.yyyy")) : "";
+        doc.add(new Paragraph(dateStr).setFont(fontBold).setFontSize(14)
+                .setTextAlignment(TextAlignment.CENTER));
+        doc.add(new Paragraph("\n"));
+
+        Table infoTable = new Table(UnitValue.createPercentArray(new float[]{35, 65}))
+                .setWidth(UnitValue.createPercentValue(80))
+                .setHorizontalAlignment(HorizontalAlignment.CENTER);
+        addInfoRow(infoTable, "Vypracováno pro:", safe(subject.getClientName()), fontBold, fontRegular);
+        addInfoRow(infoTable, "Předmět prodeje:", buildSubjectLine(subject), fontBold, fontRegular);
+        addInfoRow(infoTable, "Adresa:", safe(subject.getAddress()), fontBold, fontRegular);
+        doc.add(infoTable);
+        doc.add(new Paragraph("\n"));
+
+        if (subject.getDescription() != null && !subject.getDescription().isBlank()) {
+            doc.add(new Paragraph("Popis nemovitosti:")
+                    .setFont(fontBold).setFontSize(12).setFontColor(COLOR_PRIMARY));
+            doc.add(new Paragraph(subject.getDescription()).setFontSize(10).setFontColor(COLOR_GRAY));
+        }
+    }
+
+    private String buildSubjectLine(Subject s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("byt ").append(safe(s.getDisposition()));
+        if (s.getOwnership() != null && !s.getOwnership().isBlank()) sb.append(", ").append(s.getOwnership());
+        if (s.getAreaSqm() > 0) sb.append(", ").append(s.getAreaSqm()).append(" m²");
+        if (s.getExtras() != null && !s.getExtras().isBlank()) sb.append(" + ").append(s.getExtras());
+        return sb.toString();
+    }
+
+    private void addInfoRow(Table table, String label, String value, PdfFont fontBold, PdfFont fontRegular) {
+        table.addCell(new Cell().add(new Paragraph(label).setFont(fontBold).setFontSize(11))
+                .setBorder(Border.NO_BORDER).setPaddingBottom(4));
+        table.addCell(new Cell().add(new Paragraph(value).setFont(fontRegular).setFontSize(11))
+                .setBorder(Border.NO_BORDER).setPaddingBottom(4));
+    }
+
+    // === SUBJECT PHOTOS ===
+
+    private void addSubjectPhotosPage(Document doc, Subject subject, PdfFont fontBold) {
+        doc.add(new Paragraph("Fotky nemovitosti")
+                .setFont(fontBold).setFontSize(14).setFontColor(COLOR_PRIMARY));
+        addPhotoGrid(doc, subject.getPhotoFilenames());
+    }
+
+    // === COMPARABLE ===
+
+    private void addComparablePage(Document doc, ComparableProperty comp,
+                                   PdfFont fontRegular, PdfFont fontBold, boolean isSold) {
+        doc.add(new Paragraph("\n"));
+        String title = String.format("Byt %s, %s m², %s, %s – %s",
+                safe(comp.getDisposition()), comp.getArea(),
+                safe(comp.getStreet()), safe(comp.getCity()), safe(comp.getDistrict()));
+        doc.add(new Paragraph(title).setFont(fontBold).setFontSize(12).setFontColor(COLOR_PRIMARY));
+
+        String priceLabel;
+        if (isSold) {
+            priceLabel = String.format("Prodáno za %,d Kč", comp.getPriceKc()).replace(",", ".");
+            if (comp.getSoldDate() != null && !comp.getSoldDate().isBlank())
+                priceLabel += " v " + comp.getSoldDate();
+            if (comp.getSoldDuration() != null && !comp.getSoldDuration().isBlank())
+                priceLabel += " za " + comp.getSoldDuration();
+        } else {
+            priceLabel = String.format("%,d Kč", comp.getPriceKc()).replace(",", ".");
+        }
+        doc.add(new Paragraph(priceLabel).setFont(fontBold).setFontSize(14)
+                .setFontColor(isSold ? new DeviceRgb(46, 125, 50) : COLOR_ACCENT));
+
+        if (!comp.getPhotoFilenames().isEmpty()) addPhotoGrid(doc, comp.getPhotoFilenames());
+
+        if (comp.getDescriptionText() != null && !comp.getDescriptionText().isBlank()) {
+            Paragraph descP = new Paragraph().setFontSize(9).setFontColor(COLOR_GRAY);
+            if (comp.getHighlights().isEmpty()) {
+                descP.add(new Text(comp.getDescriptionText()).setFont(fontRegular));
+            } else {
+                String remaining = comp.getDescriptionText();
+                for (String hl : comp.getHighlights()) {
+                    int idx = remaining.toLowerCase().indexOf(hl.toLowerCase());
+                    if (idx >= 0) {
+                        if (idx > 0) descP.add(new Text(remaining.substring(0, idx)).setFont(fontRegular));
+                        descP.add(new Text(remaining.substring(idx, idx + hl.length()))
+                                .setFont(fontBold).setBackgroundColor(COLOR_HIGHLIGHT));
+                        remaining = remaining.substring(idx + hl.length());
+                    }
+                }
+                if (!remaining.isEmpty()) descP.add(new Text(remaining).setFont(fontRegular));
+            }
+            doc.add(descP);
+        }
+
+        if (comp.getBrokerFeedback() != null && !comp.getBrokerFeedback().isBlank()) {
+            doc.add(new Paragraph("\n"));
+            doc.add(new Paragraph("Zpětná vazba od makléře:")
+                    .setFont(fontBold).setFontSize(10).setUnderline().setFontColor(COLOR_PRIMARY));
+            doc.add(new Paragraph(comp.getBrokerFeedback())
+                    .setFontSize(9).setFontColor(COLOR_GRAY).setItalic());
+        }
+    }
+
+    // === PHOTO GRID ===
+
+    private void addPhotoGrid(Document doc, List<String> filenames) {
+        if (filenames.isEmpty()) return;
+        Table t = new Table(UnitValue.createPercentArray(new float[]{33, 33, 33}))
+                .setWidth(UnitValue.createPercentValue(100)).setMarginTop(8).setMarginBottom(8);
+        for (String fn : filenames) {
+            Cell cell = new Cell().setBorder(Border.NO_BORDER).setPadding(3);
+            try {
+                byte[] bytes = photoService.getPhotoBytes(fn);
+                Image img = new Image(ImageDataFactory.create(bytes));
+                img.setWidth(UnitValue.createPercentValue(100)).setAutoScale(true);
+                cell.add(img);
+            } catch (IOException e) {
+                cell.add(new Paragraph("[" + fn + "]").setFontSize(8).setFontColor(ColorConstants.GRAY));
+            }
+            t.addCell(cell);
+        }
+        int rem = (3 - filenames.size() % 3) % 3;
+        for (int i = 0; i < rem; i++) t.addCell(new Cell().setBorder(Border.NO_BORDER));
+        doc.add(t);
+    }
+
+    // === COMPARISON TABLE ===
+
+    private void addComparisonTable(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
+        addSectionTitle(doc, "Nabízené / prodané byty – srovnání", fontBold);
+
+        Table table = new Table(UnitValue.createPercentArray(new float[]{30, 18, 17, 35}))
+                .setWidth(UnitValue.createPercentValue(100));
+        for (String h : new String[]{"Lokalita", "Prodejní cena", "Cena za m²", "Výhody / Nevýhody"}) {
+            table.addHeaderCell(new Cell()
+                    .add(new Paragraph(h).setFont(fontBold).setFontSize(9).setFontColor(ColorConstants.WHITE))
+                    .setBackgroundColor(COLOR_TABLE_HEADER)
+                    .setBorder(new SolidBorder(ColorConstants.WHITE, 0.5f)).setPadding(6));
+        }
+
+        List<ComparableProperty> offers = project.getOffers();
+        List<ComparableProperty> sold = project.getSold();
+
+        if (!offers.isEmpty()) {
+            table.addCell(new Cell(1, 4).add(new Paragraph("Nabídka").setFont(fontBold).setFontSize(9))
+                    .setBackgroundColor(COLOR_TABLE_OFFER)
+                    .setBorder(new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f)));
+            offers.forEach(c -> addTableRow(table, c, fontRegular, fontBold, false));
+        }
+        if (!sold.isEmpty()) {
+            table.addCell(new Cell(1, 4).add(new Paragraph("Prodáno").setFont(fontBold).setFontSize(9))
+                    .setBackgroundColor(COLOR_TABLE_SOLD)
+                    .setBorder(new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f)));
+            sold.forEach(c -> addTableRow(table, c, fontRegular, fontBold, true));
+        }
+        doc.add(table);
+    }
+
+    private void addTableRow(Table table, ComparableProperty c, PdfFont fontRegular, PdfFont fontBold, boolean isSold) {
+        SolidBorder b = new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f);
+
+        Paragraph loc = new Paragraph()
+                .add(new Text(safe(c.getStreet()) + ",\n").setFont(fontBold).setFontSize(9))
+                .add(new Text(safe(c.getDisposition()) + ", " + c.getArea() + " m²").setFont(fontRegular).setFontSize(8));
+        table.addCell(new Cell().add(loc).setBorder(b).setPadding(5));
+
+        table.addCell(new Cell().add(new Paragraph(String.format("%,d Kč", c.getPriceKc()).replace(",", "."))
+                .setFont(fontBold).setFontSize(9)).setBorder(b).setPadding(5));
+
+        table.addCell(new Cell().add(new Paragraph(String.format("%,d Kč", c.getPricePerSqm()).replace(",", "."))
+                .setFont(fontBold).setFontSize(9)).setBorder(b).setPadding(5));
+
+        StringBuilder det = new StringBuilder();
+        if (c.getFloor() != null && !c.getFloor().isBlank()) det.append(c.getFloor()).append(", ");
+        if (c.getExtras() != null && !c.getExtras().isBlank()) det.append(c.getExtras()).append(",\n");
+        if (c.getCondition() != null && !c.getCondition().isBlank()) det.append(c.getCondition());
+        if (isSold && c.getSoldDate() != null && !c.getSoldDate().isBlank()) {
+            det.append("\nProdáno v ").append(c.getSoldDate());
+            if (c.getSoldDuration() != null && !c.getSoldDuration().isBlank())
+                det.append(" za ").append(c.getSoldDuration());
+        }
+        table.addCell(new Cell().add(new Paragraph(det.toString()).setFont(fontRegular).setFontSize(8))
+                .setBorder(b).setPadding(5));
+    }
+
+    // === PRICING ===
+
+    private void addPricingPage(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
+        Pricing pricing = project.getPricing();
+        addSectionTitle(doc, "Návrh pásma prodejní ceny Vaší nemovitosti", fontBold);
+
+        List<String> positives = pricing.getPositivesList();
+        if (!positives.isEmpty()) {
+            doc.add(new Paragraph("Kladné stránky nemovitosti:")
+                    .setFont(fontBold).setFontSize(11).setUnderline().setMarginTop(12));
+            for (String pos : positives) {
+                doc.add(new Paragraph("• " + pos).setFontSize(10).setMarginLeft(20));
+            }
+        }
+
+        List<String> negatives = pricing.getNegativesList();
+        if (!negatives.isEmpty()) {
+            doc.add(new Paragraph("Záporné stránky nemovitosti:")
+                    .setFont(fontBold).setFontSize(11).setUnderline().setMarginTop(12));
+            for (String neg : negatives) {
+                doc.add(new Paragraph("• " + neg).setFontSize(10).setMarginLeft(20));
+            }
+        }
+
+        if (pricing.getRecommendation() != null && !pricing.getRecommendation().isBlank()) {
+            doc.add(new Paragraph("Doporučení:").setFont(fontBold).setFontSize(11).setMarginTop(12));
+            doc.add(new Paragraph("• " + pricing.getRecommendation()).setFontSize(10).setMarginLeft(20));
+        }
+
+        doc.add(new Paragraph("\n"));
+        String range = pricing.getPriceRangeFormatted();
+        if (!range.isBlank()) {
+            doc.add(new Paragraph("od " + range).setFont(fontBold).setFontSize(16)
+                    .setFontColor(COLOR_PRIMARY).setTextAlignment(TextAlignment.CENTER).setMarginTop(12));
+        }
+
+        String startPrice = pricing.getStartPriceFormatted();
+        if (!startPrice.isBlank()) {
+            doc.add(new Paragraph("Jako počáteční prodejní cenu navrhuji začít s cenou " + startPrice)
+                    .setFont(fontBold).setFontSize(12).setTextAlignment(TextAlignment.CENTER)
+                    .setMarginTop(8).setUnderline());
+        }
+    }
+
+    // === AGENT FOOTER ===
+
+    private void addAgentFooter(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
+        doc.add(new Paragraph("\n\n"));
+        doc.add(new Paragraph("Vypracoval").setFontSize(10).setItalic().setFontColor(COLOR_GRAY));
+
+        Table footer = new Table(UnitValue.createPercentArray(new float[]{50, 50}))
+                .setWidth(UnitValue.createPercentValue(100)).setMarginTop(8);
+        Paragraph contact = new Paragraph()
+                .add(new Text(safe(project.getAgentName()) + "\n").setFont(fontBold).setFontSize(12))
+                .add(new Text(safe(project.getAgentTitle()) + "\n").setFont(fontRegular).setFontSize(10))
+                .add(new Text("M: " + safe(project.getAgentPhone()) + "\n").setFontSize(9))
+                .add(new Text("E: " + safe(project.getAgentEmail()) + "\n").setFontSize(9))
+                .add(new Text(safe(project.getAgencyName()) + "\n").setFont(fontBold).setFontSize(10))
+                .add(new Text(safe(project.getAgencyAddress()) + "\n").setFontSize(8))
+                .add(new Text(safe(project.getAgentWebsite())).setFontSize(9).setFontColor(COLOR_PRIMARY));
+        footer.addCell(new Cell().add(contact).setBorder(Border.NO_BORDER));
+        footer.addCell(new Cell().setBorder(Border.NO_BORDER));
+        doc.add(footer);
+    }
+
+    // === HELPERS ===
+
+    private void addSectionTitle(Document doc, String title, PdfFont fontBold) {
+        doc.add(new Paragraph(title).setFont(fontBold).setFontSize(16).setFontColor(COLOR_PRIMARY)
+                .setMarginBottom(12).setBorderBottom(new SolidBorder(COLOR_PRIMARY, 2)));
+    }
+
+    private static String safe(String s) {
+        return s != null ? s : "";
+    }
+}
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/PhotoService.java
+----------------------------------------
+package cz.stabuilder.service;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.*;
+import java.util.UUID;
+
+@Service
+public class PhotoService {
+
+    private static final String UPLOAD_DIR = "data/photos";
+    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+    @PostConstruct
+    public void init() throws IOException {
+        Files.createDirectories(Path.of(UPLOAD_DIR));
+    }
+
+    /**
+     * Uložit nahraný soubor a vrátit jeho unikátní název.
+     */
+    public String savePhoto(MultipartFile file) throws IOException {
+        if (file.isEmpty()) {
+            throw new IOException("Soubor je prázdný");
+        }
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IOException("Soubor je příliš velký (max 10 MB)");
+        }
+
+        String originalName = file.getOriginalFilename();
+        String extension = getExtension(originalName);
+        if (!isAllowedExtension(extension)) {
+            throw new IOException("Nepodporovaný formát souboru: " + extension);
+        }
+
+        String uniqueName = UUID.randomUUID().toString().substring(0, 12) + "." + extension;
+        Path targetPath = Path.of(UPLOAD_DIR, uniqueName);
+        file.transferTo(targetPath);
+
+        return uniqueName;
+    }
+
+    /**
+     * Získat cestu k fotce.
+     */
+    public Path getPhotoPath(String filename) {
+        return Path.of(UPLOAD_DIR, filename);
+    }
+
+    /**
+     * Ověřit existenci fotky.
+     */
+    public boolean exists(String filename) {
+        return Files.exists(Path.of(UPLOAD_DIR, filename));
+    }
+
+    /**
+     * Smazat fotku.
+     */
+    public boolean deletePhoto(String filename) throws IOException {
+        return Files.deleteIfExists(Path.of(UPLOAD_DIR, filename));
+    }
+
+    /**
+     * Získat byte[] fotky pro PDF export.
+     */
+    public byte[] getPhotoBytes(String filename) throws IOException {
+        Path path = Path.of(UPLOAD_DIR, filename);
+        if (!Files.exists(path)) {
+            throw new IOException("Fotka nenalezena: " + filename);
+        }
+        return Files.readAllBytes(path);
+    }
+
+    private String getExtension(String filename) {
+        if (filename == null || !filename.contains(".")) return "";
+        return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
+    }
+
+    private boolean isAllowedExtension(String ext) {
+        return ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png")
+                || ext.equals("webp") || ext.equals("gif");
+    }
+}
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/ProjectService.java
+----------------------------------------
+package cz.stabuilder.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import cz.stabuilder.model.StaProject;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+@Service
+public class ProjectService {
+
+    private static final String DATA_DIR = "data/projects";
+    private final ObjectMapper mapper;
+
+    public ProjectService() {
+        this.mapper = new ObjectMapper();
+        this.mapper.registerModule(new JavaTimeModule());
+        this.mapper.enable(SerializationFeature.INDENT_OUTPUT);
+        this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    }
+
+    @PostConstruct
+    public void init() throws IOException {
+        Files.createDirectories(Path.of(DATA_DIR));
+    }
+
+    /**
+     * Uložit projekt do JSON souboru.
+     */
+    public void save(StaProject project) throws IOException {
+        String filename = sanitizeFilename(project.getProjectName());
+        if (filename.isBlank()) {
+            filename = "projekt_" + System.currentTimeMillis();
+        }
+        Path path = Path.of(DATA_DIR, filename + ".json");
+        mapper.writeValue(path.toFile(), project);
+    }
+
+    /**
+     * Načíst projekt ze souboru.
+     */
+    public StaProject load(String name) throws IOException {
+        Path path = Path.of(DATA_DIR, name + ".json");
+        if (!Files.exists(path)) {
+            throw new IOException("Projekt nenalezen: " + name);
+        }
+        return mapper.readValue(path.toFile(), StaProject.class);
+    }
+
+    /**
+     * Seznam všech uložených projektů.
+     */
+    public List<String> listProjects() throws IOException {
+        List<String> projects = new ArrayList<>();
+        Path dir = Path.of(DATA_DIR);
+        if (Files.exists(dir)) {
+            try (Stream<Path> stream = Files.list(dir)) {
+                stream.filter(p -> p.toString().endsWith(".json"))
+                      .forEach(p -> {
+                          String name = p.getFileName().toString();
+                          projects.add(name.substring(0, name.length() - 5));
+                      });
+            }
+        }
+        return projects;
+    }
+
+    /**
+     * Smazat projekt.
+     */
+    public boolean delete(String name) throws IOException {
+        Path path = Path.of(DATA_DIR, name + ".json");
+        return Files.deleteIfExists(path);
+    }
+
+    /**
+     * Serialize project to JSON string (for API responses).
+     */
+    public String toJson(StaProject project) throws IOException {
+        return mapper.writeValueAsString(project);
+    }
+
+    /**
+     * Deserialize project from JSON string.
+     */
+    public StaProject fromJson(String json) throws IOException {
+        return mapper.readValue(json, StaProject.class);
+    }
+
+    private String sanitizeFilename(String name) {
+        if (name == null) return "";
+        return name.replaceAll("[^a-zA-Z0-9áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ _-]", "")
+                    .replaceAll("\\s+", "_")
+                    .toLowerCase();
+    }
+}
+
+--------------------------------------------------------------------------------
+
+FILE: src/main/java/cz/stabuilder/service/StaService.java
+----------------------------------------
+package cz.stabuilder.service;
+
+import cz.stabuilder.model.ComparableProperty;
+import cz.stabuilder.model.Pricing;
+import cz.stabuilder.model.StaProject;
+import cz.stabuilder.model.Subject;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.UUID;
+
+/**
+ * Služba pro správu STA projektu.
+ * Drží aktuální projekt v paměti (single-user app).
+ * Fotky ukládá na disk do uploads/.
+ */
+@Service
+public class StaService {
+
+    private static final Path UPLOAD_DIR = Paths.get("uploads");
+
+    private StaProject project = new StaProject();
+
+    public StaService() {
+        try {
+            Files.createDirectories(UPLOAD_DIR);
+        } catch (IOException e) {
+            throw new RuntimeException("Nelze vytvořit adresář pro uploady", e);
+        }
+    }
+
+    // --- Projekt ---
+
+    public StaProject getProject() {
+        return project;
+    }
+
+    public void resetProject() {
+        project = new StaProject();
+    }
+
+    // --- Předmět prodeje ---
+
+    public Subject getSubject() {
+        return project.getSubject();
+    }
+
+    public void updateSubject(Subject updated) {
+        // Zachová existující fotky pokud nové nejsou dodány
+        if (updated.getPhotoFilenames() == null || updated.getPhotoFilenames().isEmpty()) {
+            updated.setPhotoFilenames(project.getSubject().getPhotoFilenames());
+        }
+        project.setSubject(updated);
+    }
+
+    // --- Srovnatelné nemovitosti ---
+
+    public ComparableProperty addComparable() {
+        ComparableProperty comp = new ComparableProperty();
+        project.addComparable(comp);
+        return comp;
+    }
+
+    public ComparableProperty updateComparable(Long id, ComparableProperty updated) {
+        ComparableProperty existing = project.findComparable(id);
+        if (existing == null) return null;
+
+        existing.setCategory(updated.getCategory());
+        existing.setDisposition(updated.getDisposition());
+        existing.setAreaSqm(updated.getAreaSqm());
+        existing.setStreet(updated.getStreet());
+        existing.setDistrict(updated.getDistrict());
+        existing.setPriceKc(updated.getPriceKc());
+        existing.setFloor(updated.getFloor());
+        existing.setExtras(updated.getExtras());
+        existing.setSoldDate(updated.getSoldDate());
+        existing.setSoldDuration(updated.getSoldDuration());
+        existing.setDescriptionText(updated.getDescriptionText());
+        existing.setHighlights(updated.getHighlights());
+        existing.setBrokerFeedback(updated.getBrokerFeedback());
+
+        // Fotky se mění jen přes upload endpoint
+        return existing;
+    }
+
+    public boolean removeComparable(Long id) {
+        return project.removeComparable(id);
+    }
+
+    // --- Cenové doporučení ---
+
+    public Pricing getPricing() {
+        return project.getPricing();
+    }
+
+    public void updatePricing(Pricing updated) {
+        project.setPricing(updated);
+    }
+
+    // --- Fotky ---
+
+    /**
+     * Uloží nahraný soubor a vrátí jeho unikátní název.
+     */
+    public String savePhoto(MultipartFile file) throws IOException {
+        String originalName = file.getOriginalFilename();
+        String ext = "";
+        if (originalName != null && originalName.contains(".")) {
+            ext = originalName.substring(originalName.lastIndexOf('.'));
+        }
+        String uniqueName = UUID.randomUUID().toString().substring(0, 8) + ext;
+
+        Path target = UPLOAD_DIR.resolve(uniqueName);
+        file.transferTo(target.toFile());
+
+        return uniqueName;
+    }
+
+    /**
+     * Vrátí cestu k fotce.
+     */
+    public Path getPhotoPath(String filename) {
+        return UPLOAD_DIR.resolve(filename);
+    }
+
+    /**
+     * Přidá fotku k předmětu prodeje.
+     */
+    public void addSubjectPhoto(String filename) {
+        if (project.getSubject().getPhotoFilenames().size() < 6) {
+            project.getSubject().getPhotoFilenames().add(filename);
+        }
+    }
+
+    /**
+     * Odstraní fotku z předmětu prodeje.
+     */
+    public void removeSubjectPhoto(int index) {
+        var photos = project.getSubject().getPhotoFilenames();
+        if (index >= 0 && index < photos.size()) {
+            photos.remove(index);
+        }
+    }
+
+    /**
+     * Přidá fotku ke srovnatelné nemovitosti.
+     */
+    public void addComparablePhoto(Long compId, String filename) {
+        ComparableProperty comp = project.findComparable(compId);
+        if (comp != null && comp.getPhotoFilenames().size() < 6) {
+            comp.getPhotoFilenames().add(filename);
+        }
+    }
+
+    /**
+     * Odstraní fotku ze srovnatelné nemovitosti.
+     */
+    public void removeComparablePhoto(Long compId, int index) {
+        ComparableProperty comp = project.findComparable(compId);
+        if (comp != null) {
+            var photos = comp.getPhotoFilenames();
+            if (index >= 0 && index < photos.size()) {
+                photos.remove(index);
+            }
+        }
+    }
+}
 
 --------------------------------------------------------------------------------
 
@@ -735,6 +3053,27 @@ const API = {
     getPhotoUrl(filename) {
         return `/api/photos/${filename}`;
     },
+
+    async function exportDocx() {
+        try {
+            const res = await fetch('/api/export/docx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(state)
+            });
+            if (!res.ok) throw new Error('Export selhal');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `STA_${state.subject.clientName || 'export'}.docx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            notify('DOCX staženo!');
+        } catch (e) {
+            notify('Chyba při exportu DOCX', 'error');
+        }
+    }
 
     async exportPdf(data, preview = false) {
         const endpoint = preview ? '/api/export/pdf/preview' : '/api/export/pdf';
@@ -1414,8 +3753,9 @@ FILE: src/main/resources/templates/index.html
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STA Builder</title>
-    <link rel="stylesheet" href="/style.css">
+    <title>STA Builder — Srovnávací tržní analýza</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
 
@@ -1423,2122 +3763,172 @@ FILE: src/main/resources/templates/index.html
 <div class="header">
     <div>
         <h1>STA Builder</h1>
-        <p>Srovnávací tržní analýza</p>
+        <p>Srovnávací tržní analýza — rychle a přehledně</p>
     </div>
     <div class="header-actions">
-        <button class="btn btn-ghost" onclick="saveSubject(); savePricing()">💾 Uložit</button>
-        <button class="btn btn-danger" onclick="resetAll()">Reset</button>
+        <button class="btn btn-ghost btn-small" onclick="saveProject()">💾 Uložit</button>
+        <button class="btn btn-danger btn-small" onclick="resetAll()">Reset</button>
     </div>
+</div>
+
+<!-- Project Bar -->
+<div class="project-bar">
+    <label class="form-label" style="margin:0; line-height:2">Projekt:</label>
+    <input type="text" id="projectName" class="form-input" style="width:200px;padding:6px 12px;font-size:13px"
+           placeholder="Název projektu..." onchange="state.projectName = this.value">
+    <select id="projectSelect" class="form-input" style="padding:6px 12px;font-size:13px" onchange="loadSelectedProject()">
+        <option value="">— Načíst projekt —</option>
+    </select>
+    <button class="btn btn-ghost btn-small" onclick="refreshProjectList()">🔄</button>
+    <button class="btn btn-danger btn-small" onclick="deleteSelectedProject()">🗑️</button>
 </div>
 
 <!-- Tabs -->
 <div class="tabs">
     <button class="tab-btn active" data-tab="subject">🏠 Předmět</button>
-    <button class="tab-btn" data-tab="comps">📊 Srovnání (<span id="comp-count">0</span>)</button>
+    <button class="tab-btn" data-tab="comparables">📊 Srovnání <span class="tab-badge" id="compCount">0</span></button>
     <button class="tab-btn" data-tab="table">📋 Tabulka</button>
     <button class="tab-btn" data-tab="pricing">💰 Cena</button>
     <button class="tab-btn" data-tab="export">📄 Export</button>
 </div>
 
-<!-- Content -->
+<!-- Content Area -->
 <div class="content">
 
-    <!-- === TAB: Předmět prodeje === -->
-    <div id="tab-subject" class="tab-panel active">
+    <!-- SUBJECT TAB -->
+    <div class="tab-content active" id="tab-subject">
         <h2 class="section-title">Předmět prodeje</h2>
-
-        <div class="form-grid cols-2">
-            <div class="field"><label>Datum</label><input type="date" id="subj-date" onchange="saveSubject()"></div>
-            <div class="field"><label>Klient</label><input id="subj-client" placeholder="Jméno klienta" onchange="saveSubject()"></div>
+        <div class="form-grid form-grid-2" style="margin-bottom:12px">
+            <div class="form-group">
+                <label class="form-label">Datum</label>
+                <input type="date" class="form-input" id="subjectDate" onchange="state.subject.date = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Klient</label>
+                <input type="text" class="form-input" id="subjectClient" placeholder="Jméno klienta"
+                       onchange="state.subject.clientName = this.value">
+            </div>
         </div>
-
-        <div class="form-grid cols-4 mt-8">
-            <div class="field"><label>Dispozice</label><input id="subj-disposition" placeholder="4+1" onchange="saveSubject()"></div>
-            <div class="field"><label>Vlastnictví</label><input id="subj-ownership" placeholder="OV" onchange="saveSubject()"></div>
-            <div class="field"><label>Plocha m²</label><input id="subj-area" placeholder="82" onchange="saveSubject()"></div>
-            <div class="field"><label>Příslušenství</label><input id="subj-extras" placeholder="lodžie + sklep" onchange="saveSubject()"></div>
+        <div class="form-grid form-grid-4" style="margin-bottom:12px">
+            <div class="form-group">
+                <label class="form-label">Dispozice</label>
+                <input type="text" class="form-input" id="subjectDisposition" placeholder="4+1"
+                       onchange="state.subject.disposition = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Vlastnictví</label>
+                <select class="form-input form-select" id="subjectOwnership" onchange="state.subject.ownership = this.value">
+                    <option value="OV">OV</option>
+                    <option value="SV">SV</option>
+                    <option value="Družstevní">Družstevní</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Plocha (m²)</label>
+                <input type="text" class="form-input" id="subjectArea" placeholder="82"
+                       onchange="state.subject.area = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Příslušenství</label>
+                <input type="text" class="form-input" id="subjectExtras" placeholder="lodžie 5 m² + sklep 4 m²"
+                       onchange="state.subject.extras = this.value">
+            </div>
         </div>
-
-        <div class="form-grid mt-8">
-            <div class="field"><label>Adresa</label><input id="subj-address" placeholder="Ulice, město" onchange="saveSubject()"></div>
+        <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">Adresa</label>
+            <input type="text" class="form-input" id="subjectAddress" placeholder="Bryksova 956/3, Černý Most, Praha 9"
+                   onchange="state.subject.address = this.value">
         </div>
-
-        <div class="form-grid mt-8">
-            <div class="field"><label>Popis nemovitosti</label><textarea id="subj-description" rows="5" placeholder="Popište nemovitost..." onchange="saveSubject()"></textarea></div>
+        <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">Popis nemovitosti</label>
+            <textarea class="form-input form-textarea" id="subjectDescription" rows="6"
+                      placeholder="Popište nemovitost..."
+                      onchange="state.subject.description = this.value"></textarea>
         </div>
-
-        <div class="mt-16">
-            <label style="font-size:11px; color:#888; font-weight:600; display:block; margin-bottom:6px">PRACOVNÍ FOTKY</label>
-            <div class="photo-grid" id="subj-photos"></div>
-            <label class="photo-upload-label mt-8">
-                + Nahrát fotky
-                <input type="file" accept="image/*" multiple id="subj-photo-input" onchange="uploadSubjectPhoto()" style="display:none">
-            </label>
+        <div class="form-group">
+            <label class="form-label">Pracovní fotky</label>
+            <div class="photo-grid" id="subjectPhotos"></div>
         </div>
     </div>
 
-    <!-- === TAB: Srovnání === -->
-    <div id="tab-comps" class="tab-panel">
-        <div class="section-row-header">
-            <h2 class="section-title" style="margin-bottom:0">Srovnatelné nemovitosti</h2>
-            <button class="btn btn-primary" onclick="addComp()">+ Přidat</button>
+    <!-- COMPARABLES TAB -->
+    <div class="tab-content" id="tab-comparables">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h2 class="section-title" style="margin:0">Srovnatelné nemovitosti</h2>
+            <button class="btn btn-primary" onclick="addComparable()">+ Přidat nemovitost</button>
         </div>
-        <div id="comp-list"></div>
+        <div id="comparablesList"></div>
     </div>
 
-    <!-- === TAB: Tabulka === -->
-    <div id="tab-table" class="tab-panel">
+    <!-- TABLE TAB -->
+    <div class="tab-content" id="tab-table">
         <h2 class="section-title">Srovnávací tabulka</h2>
-        <div style="background:#16161e; border:1px solid #2a2a3a; border-radius:10px; overflow:hidden">
-            <table class="comparison-table">
-                <thead>
-                    <tr>
-                        <th>Lokalita</th>
-                        <th>Cena</th>
-                        <th>Kč/m²</th>
-                        <th>Poznámky</th>
-                    </tr>
-                </thead>
-                <tbody id="table-body"></tbody>
-            </table>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+            <div style="overflow-x:auto" id="comparisonTable"></div>
         </div>
     </div>
 
-    <!-- === TAB: Cenové doporučení === -->
-    <div id="tab-pricing" class="tab-panel">
+    <!-- PRICING TAB -->
+    <div class="tab-content" id="tab-pricing">
         <h2 class="section-title">Cenové doporučení</h2>
-
-        <div class="form-grid">
-            <div class="field"><label>Kladné stránky</label><textarea id="price-positives" rows="4" placeholder="Každý řádek = jedna položka" onchange="savePricing()"></textarea></div>
-            <div class="field"><label>Záporné stránky</label><textarea id="price-negatives" rows="3" placeholder="Každý řádek = jedna položka" onchange="savePricing()"></textarea></div>
-            <div class="field"><label>Doporučení</label><input id="price-recommendation" placeholder="kvalitní příprava na prodej..." onchange="savePricing()"></div>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Kladné stránky nemovitosti</label>
+            <textarea class="form-input form-textarea" id="pricingPositives" rows="4"
+                      placeholder="Každý řádek = jedna položka"
+                      onchange="state.pricing.positives = this.value.split('\n').filter(s=>s.trim())"></textarea>
         </div>
-
-        <div class="form-grid cols-3 mt-8">
-            <div class="field"><label>Rozmezí OD (Kč)</label><input id="price-from" placeholder="8500000" onchange="savePricing()"></div>
-            <div class="field"><label>Rozmezí DO (Kč)</label><input id="price-to" placeholder="8800000" onchange="savePricing()"></div>
-            <div class="field"><label>Počáteční cena</label><input id="price-start" placeholder="8990000" onchange="savePricing()"></div>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Záporné stránky nemovitosti</label>
+            <textarea class="form-input form-textarea" id="pricingNegatives" rows="3"
+                      placeholder="Každý řádek = jedna položka"
+                      onchange="state.pricing.negatives = this.value.split('\n').filter(s=>s.trim())"></textarea>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Doporučení</label>
+            <textarea class="form-input form-textarea" id="pricingRec" rows="2"
+                      placeholder="kvalitní příprava na prodej..."
+                      onchange="state.pricing.recommendation = this.value"></textarea>
+        </div>
+        <div class="form-grid form-grid-3">
+            <div class="form-group">
+                <label class="form-label">Cenové rozmezí OD (Kč)</label>
+                <input type="text" class="form-input" id="pricingFrom" placeholder="8500000"
+                       onchange="state.pricing.priceFrom = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cenové rozmezí DO (Kč)</label>
+                <input type="text" class="form-input" id="pricingTo" placeholder="8800000"
+                       onchange="state.pricing.priceTo = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Počáteční cena (Kč)</label>
+                <input type="text" class="form-input" id="pricingStart" placeholder="8990000"
+                       onchange="state.pricing.startPrice = this.value">
+            </div>
         </div>
     </div>
 
-    <!-- === TAB: Export === -->
-    <div id="tab-export" class="tab-panel">
-        <h2 class="section-title">Export</h2>
-        <p style="color:#888; font-size:13px; margin-bottom:16px">
-            Vygenerujte hotový DOCX dokument nebo exportujte data jako JSON.
-        </p>
-        <div class="flex gap-8">
-            <button class="btn btn-export" onclick="exportDocx()">📄 Stáhnout DOCX</button>
-            <button class="btn btn-ghost" onclick="exportJson()">📋 Export JSON</button>
+    <!-- EXPORT TAB -->
+    <div class="tab-content" id="tab-export">
+        <h2 class="section-title">Export a generování dokumentu</h2>
+        <div class="export-actions">
+            <button class="btn btn-accent" onclick="exportDocx()">📄 Stáhnout DOCX</button>
+            <button class="btn btn-primary" onclick="exportPdf()">📄 Stáhnout PDF</button>
+            <button class="btn btn-ghost" onclick="previewPdf()">👁 Náhled PDF</button>
+            <button class="btn btn-ghost" onclick="toggleTextPreview()">📝 Textový náhled</button>
         </div>
+        <div id="textPreview" style="display:none">
+            <pre class="text-preview" id="textPreviewContent"></pre>
+        </div>
+        <div class="export-stats" id="exportStats"></div>
     </div>
-
 </div>
 
-<script src="/app.js"></script>
+<!-- Notification container -->
+<div id="notifications"></div>
+
+<script src="/js/app.js"></script>
 </body>
 </html>
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/StaBuilderApplication.java
-----------------------------------------
-package cz.stabuilder;
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-public class StaBuilderApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(StaBuilderApplication.class, args);
-        System.out.println("\n=== STA Builder běží na http://localhost:8080 ===\n");
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/config/WebConfig.java
-----------------------------------------
-package cz.stabuilder.config;
-
-import org.springframework.context.annotation.Configuration;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-
-@Configuration
-public class WebConfig implements WebMvcConfigurer {
-
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**")
-                .allowedOrigins("*")
-                .allowedMethods("GET", "POST", "PUT", "DELETE")
-                .allowedHeaders("*");
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/controller/PageController.java
-----------------------------------------
-package cz.stabuilder.controller;
-
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.GetMapping;
-
-/**
- * Servíruje hlavní HTML stránku.
- */
-@Controller
-public class PageController {
-
-    @GetMapping("/")
-    public String index() {
-        return "index";
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/controller/StaController.java
-----------------------------------------
-package cz.stabuilder.controller;
-
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.Pricing;
-import cz.stabuilder.model.StaProject;
-import cz.stabuilder.model.Subject;
-import cz.stabuilder.service.DocxExportService;
-import cz.stabuilder.service.StaService;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.util.Map;
-
-/**
- * REST API pro STA Builder.
- * Všechny endpointy pod /api/.
- */
-@RestController
-@RequestMapping("/api")
-public class StaController {
-
-    private final StaService staService;
-    private final DocxExportService docxExportService;
-
-    public StaController(StaService staService, DocxExportService docxExportService) {
-        this.staService = staService;
-        this.docxExportService = docxExportService;
-    }
-
-    // ==================== PROJEKT ====================
-
-    /** Vrátí celý projekt. */
-    @GetMapping("/project")
-    public StaProject getProject() {
-        return staService.getProject();
-    }
-
-    /** Resetuje projekt. */
-    @PostMapping("/project/reset")
-    public Map<String, String> resetProject() {
-        staService.resetProject();
-        return Map.of("status", "ok");
-    }
-
-    // ==================== PŘEDMĚT PRODEJE ====================
-
-    /** Vrátí předmět prodeje. */
-    @GetMapping("/subject")
-    public Subject getSubject() {
-        return staService.getSubject();
-    }
-
-    /** Aktualizuje předmět prodeje. */
-    @PutMapping("/subject")
-    public Subject updateSubject(@RequestBody Subject subject) {
-        staService.updateSubject(subject);
-        return staService.getSubject();
-    }
-
-    /** Nahraje fotku k předmětu prodeje. */
-    @PostMapping("/subject/photos")
-    public Map<String, String> uploadSubjectPhoto(@RequestParam("file") MultipartFile file) throws IOException {
-        String filename = staService.savePhoto(file);
-        staService.addSubjectPhoto(filename);
-        return Map.of("filename", filename);
-    }
-
-    /** Odstraní fotku z předmětu prodeje. */
-    @DeleteMapping("/subject/photos/{index}")
-    public Map<String, String> removeSubjectPhoto(@PathVariable int index) {
-        staService.removeSubjectPhoto(index);
-        return Map.of("status", "ok");
-    }
-
-    // ==================== SROVNATELNÉ NEMOVITOSTI ====================
-
-    /** Přidá novou srovnatelnou nemovitost. */
-    @PostMapping("/comparables")
-    public ComparableProperty addComparable() {
-        return staService.addComparable();
-    }
-
-    /** Aktualizuje srovnatelnou nemovitost. */
-    @PutMapping("/comparables/{id}")
-    public ResponseEntity<ComparableProperty> updateComparable(
-            @PathVariable Long id,
-            @RequestBody ComparableProperty comp) {
-        ComparableProperty updated = staService.updateComparable(id, comp);
-        if (updated == null) return ResponseEntity.notFound().build();
-        return ResponseEntity.ok(updated);
-    }
-
-    /** Odstraní srovnatelnou nemovitost. */
-    @DeleteMapping("/comparables/{id}")
-    public Map<String, String> removeComparable(@PathVariable Long id) {
-        boolean removed = staService.removeComparable(id);
-        return Map.of("status", removed ? "ok" : "not_found");
-    }
-
-    /** Nahraje fotku ke srovnatelné nemovitosti. */
-    @PostMapping("/comparables/{id}/photos")
-    public Map<String, String> uploadComparablePhoto(
-            @PathVariable Long id,
-            @RequestParam("file") MultipartFile file) throws IOException {
-        String filename = staService.savePhoto(file);
-        staService.addComparablePhoto(id, filename);
-        return Map.of("filename", filename);
-    }
-
-    /** Odstraní fotku ze srovnatelné nemovitosti. */
-    @DeleteMapping("/comparables/{id}/photos/{index}")
-    public Map<String, String> removeComparablePhoto(
-            @PathVariable Long id,
-            @PathVariable int index) {
-        staService.removeComparablePhoto(id, index);
-        return Map.of("status", "ok");
-    }
-
-    // ==================== CENOVÉ DOPORUČENÍ ====================
-
-    /** Vrátí cenové doporučení. */
-    @GetMapping("/pricing")
-    public Pricing getPricing() {
-        return staService.getPricing();
-    }
-
-    /** Aktualizuje cenové doporučení. */
-    @PutMapping("/pricing")
-    public Pricing updatePricing(@RequestBody Pricing pricing) {
-        staService.updatePricing(pricing);
-        return staService.getPricing();
-    }
-
-    // ==================== FOTKY ====================
-
-    /** Servíruje nahranou fotku. */
-    @GetMapping("/photos/{filename}")
-    public ResponseEntity<byte[]> getPhoto(@PathVariable String filename) throws IOException {
-        var path = staService.getPhotoPath(filename);
-        if (!path.toFile().exists()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        byte[] data = java.nio.file.Files.readAllBytes(path);
-        String contentType = filename.toLowerCase().endsWith(".png")
-                ? "image/png" : "image/jpeg";
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(contentType))
-                .body(data);
-    }
-
-    // ==================== EXPORT ====================
-
-    /** Vygeneruje a stáhne DOCX. */
-    @GetMapping("/export/docx")
-    public ResponseEntity<byte[]> exportDocx() throws IOException {
-        byte[] docx = docxExportService.generateDocx(staService.getProject());
-
-        String filename = "STA_" + staService.getSubject().getClientName()
-                .replaceAll("[^a-zA-Z0-9ěščřžýáíéůúďťňĚŠČŘŽÝÁÍÉŮÚĎŤŇ]", "_")
-                + ".docx";
-
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .contentType(MediaType.parseMediaType(
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
-                .body(docx);
-    }
-
-    /** Vrátí JSON export projektu. */
-    @GetMapping("/export/json")
-    public StaProject exportJson() {
-        return staService.getProject();
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/model/ComparableProperty.java
-----------------------------------------
-package cz.stabuilder.model;
-
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * Srovnatelná nemovitost — buď aktuálně v nabídce, nebo nedávno prodaná.
- */
-public class ComparableProperty {
-
-    public enum Category {
-        OFFER,  // aktuálně v nabídce
-        SOLD    // nedávno prodáno
-    }
-
-    private Long id;
-    private Category category = Category.OFFER;
-
-    // Základní info
-    private String disposition;     // 4+1, 3+kk, ...
-    private int areaSqm;
-    private String street;
-    private String district;        // Černý Most, Hloubětín, ...
-    private long priceKc;
-    private String floor;           // "6. NP", "2. patro"
-    private String extras;          // "lodžie, sklep, po rekonstrukci"
-
-    // Jen pro SOLD
-    private String soldDate;        // "1/2025"
-    private String soldDuration;    // "2 měsíce"
-
-    // Fotky (max 6)
-    private List<String> photoFilenames = new ArrayList<>();
-
-    // Popis z inzerátu
-    private String descriptionText;
-
-    // Zvýrazněné důležité body
-    private List<String> highlights = new ArrayList<>();
-
-    // Zpětná vazba od makléře
-    private String brokerFeedback;
-
-    public ComparableProperty() {
-        this.id = System.currentTimeMillis();
-    }
-
-    /**
-     * Vypočítá cenu za m².
-     */
-    public long getPricePerSqm() {
-        if (areaSqm <= 0) return 0;
-        return Math.round((double) priceKc / areaSqm);
-    }
-
-    /**
-     * Vrací formátovanou cenu (8 500 000 Kč).
-     */
-    public String getFormattedPrice() {
-        return String.format("%,d Kč", priceKc).replace(',', ' ');
-    }
-
-    /**
-     * Vrací formátovanou cenu za m².
-     */
-    public String getFormattedPricePerSqm() {
-        long ppm = getPricePerSqm();
-        return ppm > 0 ? String.format("%,d Kč", ppm).replace(',', ' ') : "–";
-    }
-
-    /**
-     * Vrací souhrn pro tabulku — patro, stav, příslušenství.
-     */
-    public String getTableSummary() {
-        StringBuilder sb = new StringBuilder();
-        if (floor != null && !floor.isBlank()) sb.append(floor);
-        if (extras != null && !extras.isBlank()) {
-            if (!sb.isEmpty()) sb.append(", ");
-            sb.append(extras);
-        }
-        if (category == Category.SOLD && soldDate != null && !soldDate.isBlank()) {
-            if (!sb.isEmpty()) sb.append("\n");
-            sb.append("Prodáno ").append(soldDate);
-            if (soldDuration != null && !soldDuration.isBlank()) {
-                sb.append(" za ").append(soldDuration);
-            }
-        }
-        return sb.toString();
-    }
-
-    // --- Getters & Setters ---
-
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-
-    public Category getCategory() { return category; }
-    public void setCategory(Category category) { this.category = category; }
-
-    public String getDisposition() { return disposition; }
-    public void setDisposition(String disposition) { this.disposition = disposition; }
-
-    public int getAreaSqm() { return areaSqm; }
-    public void setAreaSqm(int areaSqm) { this.areaSqm = areaSqm; }
-
-    public String getStreet() { return street; }
-    public void setStreet(String street) { this.street = street; }
-
-    public String getDistrict() { return district; }
-    public void setDistrict(String district) { this.district = district; }
-
-    public long getPriceKc() { return priceKc; }
-    public void setPriceKc(long priceKc) { this.priceKc = priceKc; }
-
-    public String getFloor() { return floor; }
-    public void setFloor(String floor) { this.floor = floor; }
-
-    public String getExtras() { return extras; }
-    public void setExtras(String extras) { this.extras = extras; }
-
-    public String getSoldDate() { return soldDate; }
-    public void setSoldDate(String soldDate) { this.soldDate = soldDate; }
-
-    public String getSoldDuration() { return soldDuration; }
-    public void setSoldDuration(String soldDuration) { this.soldDuration = soldDuration; }
-
-    public List<String> getPhotoFilenames() { return photoFilenames; }
-    public void setPhotoFilenames(List<String> photoFilenames) { this.photoFilenames = photoFilenames; }
-
-    public String getDescriptionText() { return descriptionText; }
-    public void setDescriptionText(String descriptionText) { this.descriptionText = descriptionText; }
-
-    public List<String> getHighlights() { return highlights; }
-    public void setHighlights(List<String> highlights) { this.highlights = highlights; }
-
-    public String getBrokerFeedback() { return brokerFeedback; }
-    public void setBrokerFeedback(String brokerFeedback) { this.brokerFeedback = brokerFeedback; }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/model/Pricing.java
-----------------------------------------
-package cz.stabuilder.model;
-
-/**
- * Cenové doporučení — klady, zápory, rozmezí a počáteční cena.
- */
-public class Pricing {
-
-    private String positives;       // kladné stránky (řádky oddělené \n)
-    private String negatives;       // záporné stránky
-    private String recommendation;  // textové doporučení
-    private long priceFrom;         // cenové rozmezí OD
-    private long priceTo;           // cenové rozmezí DO
-    private long startPrice;        // navržená počáteční cena
-
-    public Pricing() {}
-
-    public String getFormattedPriceFrom() {
-        return priceFrom > 0 ? String.format("%,d Kč", priceFrom).replace(',', ' ') : "";
-    }
-
-    public String getFormattedPriceTo() {
-        return priceTo > 0 ? String.format("%,d Kč", priceTo).replace(',', ' ') : "";
-    }
-
-    public String getFormattedStartPrice() {
-        return startPrice > 0 ? String.format("%,d Kč", startPrice).replace(',', ' ') : "";
-    }
-
-    public String getFormattedRange() {
-        if (priceFrom > 0 && priceTo > 0) {
-            return String.format("od %s do %s", getFormattedPriceFrom(), getFormattedPriceTo());
-        }
-        return "";
-    }
-
-    // --- Getters & Setters ---
-
-    public String getPositives() { return positives; }
-    public void setPositives(String positives) { this.positives = positives; }
-
-    public String getNegatives() { return negatives; }
-    public void setNegatives(String negatives) { this.negatives = negatives; }
-
-    public String getRecommendation() { return recommendation; }
-    public void setRecommendation(String recommendation) { this.recommendation = recommendation; }
-
-    public long getPriceFrom() { return priceFrom; }
-    public void setPriceFrom(long priceFrom) { this.priceFrom = priceFrom; }
-
-    public long getPriceTo() { return priceTo; }
-    public void setPriceTo(long priceTo) { this.priceTo = priceTo; }
-
-    public long getStartPrice() { return startPrice; }
-    public void setStartPrice(long startPrice) { this.startPrice = startPrice; }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/model/StaProject.java
-----------------------------------------
-package cz.stabuilder.model;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.OptionalDouble;
-import java.util.OptionalLong;
-
-/**
- * Celý STA projekt — sdružuje předmět prodeje, srovnatelné nemovitosti a cenové doporučení.
- */
-public class StaProject {
-
-    private String projectName;
-    private Subject subject = new Subject();
-    private List<ComparableProperty> comparables = new ArrayList<>();
-    private Pricing pricing = new Pricing();
-
-    public StaProject() {}
-
-    // === Název projektu ===
-
-    /**
-     * Vrací název projektu. Pokud není explicitně nastaven,
-     * generuje se z klienta a adresy.
-     */
-    public String getProjectName() {
-        if (projectName != null && !projectName.isBlank()) {
-            return projectName;
-        }
-        StringBuilder sb = new StringBuilder("STA");
-        if (subject.getClientName() != null && !subject.getClientName().isBlank()) {
-            sb.append("_").append(subject.getClientName().trim());
-        }
-        if (subject.getAddress() != null && !subject.getAddress().isBlank()) {
-            // Vezme první část adresy (ulice)
-            String street = subject.getAddress().split(",")[0].trim();
-            sb.append("_").append(street);
-        }
-        return sb.toString();
-    }
-
-    public void setProjectName(String projectName) {
-        this.projectName = projectName;
-    }
-
-    /**
-     * Vrací název projektu bezpečný pro použití jako název souboru.
-     */
-    public String getFilenameSafe() {
-        return getProjectName()
-                .replaceAll("[^a-zA-Z0-9ěščřžýáíéůúďťňĚŠČŘŽÝÁÍÉŮÚĎŤŇ_\\-]", "_")
-                .replaceAll("_+", "_");
-    }
-
-    // === Filtrování srovnatelných nemovitostí ===
-
-    /**
-     * Vrací srovnatelné nemovitosti aktuálně v nabídce.
-     */
-    public List<ComparableProperty> getOffers() {
-        return comparables.stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.OFFER)
-                .toList();
-    }
-
-    /**
-     * Vrací nedávno prodané nemovitosti.
-     */
-    public List<ComparableProperty> getSold() {
-        return comparables.stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.SOLD)
-                .toList();
-    }
-
-    // === CRUD operace ===
-
-    /**
-     * Přidá srovnatelnou nemovitost.
-     */
-    public void addComparable(ComparableProperty comp) {
-        comparables.add(comp);
-    }
-
-    /**
-     * Odstraní srovnatelnou nemovitost podle ID.
-     */
-    public boolean removeComparable(Long id) {
-        return comparables.removeIf(c -> c.getId().equals(id));
-    }
-
-    /**
-     * Najde srovnatelnou nemovitost podle ID.
-     */
-    public ComparableProperty findComparable(Long id) {
-        return comparables.stream()
-                .filter(c -> c.getId().equals(id))
-                .findFirst()
-                .orElse(null);
-    }
-
-    // === Statistiky a výpočty ===
-
-    /**
-     * Celkový počet fotek v projektu.
-     */
-    public int getTotalPhotos() {
-        int count = subject.getPhotoFilenames().size();
-        for (ComparableProperty c : comparables) {
-            count += c.getPhotoFilenames().size();
-        }
-        return count;
-    }
-
-    /**
-     * Celkový počet srovnatelných nemovitostí.
-     */
-    public int getTotalComparables() {
-        return comparables.size();
-    }
-
-    /**
-     * Průměrná cena za m² ze všech srovnatelných nemovitostí.
-     */
-    public OptionalDouble getAveragePricePerSqm() {
-        return comparables.stream()
-                .filter(c -> c.getPricePerSqm() > 0)
-                .mapToLong(ComparableProperty::getPricePerSqm)
-                .average();
-    }
-
-    /**
-     * Průměrná cena za m² z nabídek.
-     */
-    public OptionalDouble getAverageOfferPricePerSqm() {
-        return getOffers().stream()
-                .filter(c -> c.getPricePerSqm() > 0)
-                .mapToLong(ComparableProperty::getPricePerSqm)
-                .average();
-    }
-
-    /**
-     * Průměrná cena za m² z prodaných.
-     */
-    public OptionalDouble getAverageSoldPricePerSqm() {
-        return getSold().stream()
-                .filter(c -> c.getPricePerSqm() > 0)
-                .mapToLong(ComparableProperty::getPricePerSqm)
-                .average();
-    }
-
-    /**
-     * Minimální cena ze všech srovnatelných.
-     */
-    public OptionalLong getMinPrice() {
-        return comparables.stream()
-                .filter(c -> c.getPriceKc() > 0)
-                .mapToLong(ComparableProperty::getPriceKc)
-                .min();
-    }
-
-    /**
-     * Maximální cena ze všech srovnatelných.
-     */
-    public OptionalLong getMaxPrice() {
-        return comparables.stream()
-                .filter(c -> c.getPriceKc() > 0)
-                .mapToLong(ComparableProperty::getPriceKc)
-                .max();
-    }
-
-    /**
-     * Minimální cena za m².
-     */
-    public OptionalLong getMinPricePerSqm() {
-        return comparables.stream()
-                .filter(c -> c.getPricePerSqm() > 0)
-                .mapToLong(ComparableProperty::getPricePerSqm)
-                .min();
-    }
-
-    /**
-     * Maximální cena za m².
-     */
-    public OptionalLong getMaxPricePerSqm() {
-        return comparables.stream()
-                .filter(c -> c.getPricePerSqm() > 0)
-                .mapToLong(ComparableProperty::getPricePerSqm)
-                .max();
-    }
-
-    /**
-     * Vrací true pokud projekt obsahuje dostatek dat pro export.
-     */
-    public boolean isReadyForExport() {
-        return subject.getClientName() != null && !subject.getClientName().isBlank()
-                && subject.getAddress() != null && !subject.getAddress().isBlank()
-                && !comparables.isEmpty();
-    }
-
-    /**
-     * Vrací souhrn projektu jako text (pro logování, debug).
-     */
-    @Override
-    public String toString() {
-        return String.format("StaProject[name=%s, client=%s, comparables=%d (%d nabídek, %d prodaných), photos=%d]",
-                getProjectName(),
-                subject.getClientName(),
-                comparables.size(),
-                getOffers().size(),
-                getSold().size(),
-                getTotalPhotos());
-    }
-
-    // === Getters & Setters ===
-
-    public Subject getSubject() { return subject; }
-    public void setSubject(Subject subject) { this.subject = subject; }
-
-    public List<ComparableProperty> getComparables() { return comparables; }
-    public void setComparables(List<ComparableProperty> comparables) { this.comparables = comparables; }
-
-    public Pricing getPricing() { return pricing; }
-    public void setPricing(Pricing pricing) { this.pricing = pricing; }
-}
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/model/Subject.java
-----------------------------------------
-package cz.stabuilder.model;
-
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * Předmět prodeje — nemovitost, pro kterou se STA připravuje.
- */
-public class Subject {
-
-    private LocalDate date;
-    private String clientName;
-    private String disposition;    // 4+1, 3+kk, ...
-    private String ownership;      // OV, SVJ, družstevní
-    private int areaSqm;
-    private String extras;         // lodžie 5 m² + sklep 4 m²
-    private String address;
-    private String description;
-    private List<String> photoFilenames = new ArrayList<>();
-
-    public Subject() {
-        this.date = LocalDate.now();
-        this.ownership = "OV";
-    }
-
-    // --- Getters & Setters ---
-
-    public LocalDate getDate() { return date; }
-    public void setDate(LocalDate date) { this.date = date; }
-
-    public String getClientName() { return clientName; }
-    public void setClientName(String clientName) { this.clientName = clientName; }
-
-    public String getDisposition() { return disposition; }
-    public void setDisposition(String disposition) { this.disposition = disposition; }
-
-    public String getOwnership() { return ownership; }
-    public void setOwnership(String ownership) { this.ownership = ownership; }
-
-    public int getAreaSqm() { return areaSqm; }
-    public void setAreaSqm(int areaSqm) { this.areaSqm = areaSqm; }
-
-    public String getExtras() { return extras; }
-    public void setExtras(String extras) { this.extras = extras; }
-
-    public String getAddress() { return address; }
-    public void setAddress(String address) { this.address = address; }
-
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-
-    public List<String> getPhotoFilenames() { return photoFilenames; }
-    public void setPhotoFilenames(List<String> photoFilenames) { this.photoFilenames = photoFilenames; }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/DocxExportService.java
-----------------------------------------
-package cz.stabuilder.service;
-
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.Pricing;
-import cz.stabuilder.model.StaProject;
-import cz.stabuilder.model.Subject;
-import org.apache.poi.util.Units;
-import org.apache.poi.xwpf.usermodel.*;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge;
-import org.springframework.stereotype.Service;
-
-import java.io.ByteArrayOutputStream;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.util.List;
-
-/**
- * Generuje DOCX soubor Srovnávací tržní analýzy z dat projektu.
- */
-@Service
-public class DocxExportService {
-
-    private final StaService staService;
-
-    public DocxExportService(StaService staService) {
-        this.staService = staService;
-    }
-
-    /**
-     * Vygeneruje DOCX a vrátí jako byte pole.
-     */
-    public byte[] generateDocx(StaProject project) throws IOException {
-        XWPFDocument doc = new XWPFDocument();
-
-        // --- Titulní strana ---
-        addTitle(doc, "SROVNÁVACÍ TRŽNÍ ANALÝZA");
-        addText(doc, project.getSubject().getDate().toString(), false);
-        addText(doc, "Vypracováno pro: " + project.getSubject().getClientName(), true);
-        addText(doc, String.format("Předmět prodeje: byt %s, %s, %s m²%s",
-                project.getSubject().getDisposition(),
-                project.getSubject().getOwnership(),
-                project.getSubject().getAreaSqm(),
-                project.getSubject().getExtras() != null ? " + " + project.getSubject().getExtras() : ""),
-                true);
-        addText(doc, "Adresa: " + project.getSubject().getAddress(), true);
-
-        // --- Popis nemovitosti ---
-        addHeading(doc, "Popis nemovitosti", 2);
-        addText(doc, project.getSubject().getDescription(), false);
-
-        // --- Fotky předmětu ---
-        addSubjectPhotos(doc, project.getSubject());
-
-        // --- Srovnatelné nemovitosti v nabídce ---
-        List<ComparableProperty> offers = project.getOffers();
-        if (!offers.isEmpty()) {
-            addHeading(doc, "Podobné nabídky aktuálně v prodeji", 1);
-            for (ComparableProperty comp : offers) {
-                addComparableSection(doc, comp);
-            }
-        }
-
-        // --- Nedávno prodané ---
-        List<ComparableProperty> sold = project.getSold();
-        if (!sold.isEmpty()) {
-            addHeading(doc, "Nedávno prodané nemovitosti", 1);
-            for (ComparableProperty comp : sold) {
-                addComparableSection(doc, comp);
-            }
-        }
-
-        // --- Srovnávací tabulka ---
-        addHeading(doc, "Nabízené / prodané byty — srovnání", 1);
-        addComparisonTable(doc, project);
-
-        // --- Cenové doporučení ---
-        addHeading(doc, "Návrh pásma prodejní ceny", 1);
-        addPricingSection(doc, project.getPricing());
-
-        // Export
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        doc.write(out);
-        doc.close();
-        return out.toByteArray();
-    }
-
-    // === Pomocné metody ===
-
-    private void addTitle(XWPFDocument doc, String text) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setAlignment(ParagraphAlignment.CENTER);
-        p.setSpacingAfter(200);
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setBold(true);
-        run.setFontSize(22);
-        run.setFontFamily("Arial");
-    }
-
-    private void addHeading(XWPFDocument doc, String text, int level) {
-        XWPFParagraph p = doc.createParagraph();
-        p.setStyle("Heading" + level);
-        p.setSpacingBefore(300);
-        p.setSpacingAfter(150);
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setBold(true);
-        run.setFontSize(level == 1 ? 16 : 14);
-        run.setFontFamily("Arial");
-    }
-
-    private void addText(XWPFDocument doc, String text, boolean bold) {
-        if (text == null || text.isBlank()) return;
-        XWPFParagraph p = doc.createParagraph();
-        p.setSpacingAfter(80);
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setBold(bold);
-        run.setFontSize(11);
-        run.setFontFamily("Arial");
-    }
-
-    private void addSubjectPhotos(XWPFDocument doc, Subject subject) {
-        if (subject.getPhotoFilenames().isEmpty()) return;
-
-        addHeading(doc, "Fotky pracovní", 2);
-
-        for (String filename : subject.getPhotoFilenames()) {
-            addPhoto(doc, filename);
-        }
-    }
-
-    private void addComparableSection(XWPFDocument doc, ComparableProperty comp) {
-        // Nadpis: dispozice, plocha, ulice, městská část
-        String heading = String.format("Byt %s, %d m², ul. %s, Praha — %s",
-                comp.getDisposition(), comp.getAreaSqm(),
-                comp.getStreet(), comp.getDistrict());
-        addHeading(doc, heading, 2);
-
-        // Cena
-        String priceText = comp.getFormattedPrice();
-        if (comp.getCategory() == ComparableProperty.Category.SOLD) {
-            priceText = "Prodáno za " + priceText;
-            if (comp.getSoldDate() != null) priceText += " v " + comp.getSoldDate();
-            if (comp.getSoldDuration() != null) priceText += " za " + comp.getSoldDuration();
-        }
-        addText(doc, priceText, true);
-
-        // Fotky
-        for (String filename : comp.getPhotoFilenames()) {
-            addPhoto(doc, filename);
-        }
-
-        // Popis
-        if (comp.getDescriptionText() != null && !comp.getDescriptionText().isBlank()) {
-            addText(doc, comp.getDescriptionText(), false);
-        }
-
-        // Highlights — TODO: implementovat zvýraznění v textu
-        if (!comp.getHighlights().isEmpty()) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setSpacingBefore(100);
-            XWPFRun label = p.createRun();
-            label.setText("Důležité body: ");
-            label.setBold(true);
-            label.setFontSize(11);
-            label.setFontFamily("Arial");
-            XWPFRun vals = p.createRun();
-            vals.setText(String.join(", ", comp.getHighlights()));
-            vals.setFontSize(11);
-            vals.setFontFamily("Arial");
-        }
-
-        // Makléř
-        if (comp.getBrokerFeedback() != null && !comp.getBrokerFeedback().isBlank()) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setSpacingBefore(100);
-            XWPFRun label = p.createRun();
-            label.setText("Zpětná vazba od makléře: ");
-            label.setBold(true);
-            label.setUnderline(UnderlinePatterns.SINGLE);
-            label.setFontSize(11);
-            label.setFontFamily("Arial");
-            XWPFRun text = p.createRun();
-            text.setText(comp.getBrokerFeedback());
-            text.setFontSize(11);
-            text.setFontFamily("Arial");
-        }
-    }
-
-    private void addPhoto(XWPFDocument doc, String filename) {
-        Path photoPath = staService.getPhotoPath(filename);
-        if (!photoPath.toFile().exists()) return;
-
-        try {
-            XWPFParagraph p = doc.createParagraph();
-            p.setAlignment(ParagraphAlignment.CENTER);
-            XWPFRun run = p.createRun();
-
-            String lower = filename.toLowerCase();
-            int picType;
-            if (lower.endsWith(".png")) picType = XWPFDocument.PICTURE_TYPE_PNG;
-            else if (lower.endsWith(".gif")) picType = XWPFDocument.PICTURE_TYPE_GIF;
-            else picType = XWPFDocument.PICTURE_TYPE_JPEG;
-
-            try (FileInputStream fis = new FileInputStream(photoPath.toFile())) {
-                run.addPicture(fis, picType, filename,
-                        Units.toEMU(200), Units.toEMU(150)); // šířka x výška v bodech
-            }
-        } catch (Exception e) {
-            // Pokud fotku nelze vložit, přeskočíme
-            addText(doc, "[Fotka: " + filename + " — chyba při vkládání]", false);
-        }
-    }
-
-    private void addComparisonTable(XWPFDocument doc, StaProject project) {
-        List<ComparableProperty> all = project.getComparables();
-        if (all.isEmpty()) {
-            addText(doc, "Žádné srovnatelné nemovitosti.", false);
-            return;
-        }
-
-        List<ComparableProperty> offers = project.getOffers();
-        List<ComparableProperty> sold = project.getSold();
-
-        // Počet řádků: header + (nabídka header?) + offers + (prodáno header?) + sold
-        int totalRows = 1; // header
-        if (!offers.isEmpty()) totalRows += 1 + offers.size();
-        if (!sold.isEmpty()) totalRows += 1 + sold.size();
-
-        XWPFTable table = doc.createTable(totalRows, 4);
-        table.setWidth("100%");
-
-        // Header
-        setCell(table, 0, 0, "Lokalita", true);
-        setCell(table, 0, 1, "Prodejní cena", true);
-        setCell(table, 0, 2, "Cena za m²", true);
-        setCell(table, 0, 3, "Výhody / Nevýhody", true);
-
-        int row = 1;
-
-        if (!offers.isEmpty()) {
-            setCellSpan(table, row, "Nabídka", 4);
-            row++;
-            for (ComparableProperty c : offers) {
-                setCell(table, row, 0, c.getStreet() + "\n" + c.getDisposition() + ", " + c.getAreaSqm() + " m²", false);
-                setCell(table, row, 1, c.getFormattedPrice(), false);
-                setCell(table, row, 2, c.getFormattedPricePerSqm(), false);
-                setCell(table, row, 3, c.getTableSummary(), false);
-                row++;
-            }
-        }
-
-        if (!sold.isEmpty()) {
-            setCellSpan(table, row, "Prodáno", 4);
-            row++;
-            for (ComparableProperty c : sold) {
-                setCell(table, row, 0, c.getStreet() + "\n" + c.getDisposition() + ", " + c.getAreaSqm() + " m²", false);
-                setCell(table, row, 1, c.getFormattedPrice(), false);
-                setCell(table, row, 2, c.getFormattedPricePerSqm(), false);
-                setCell(table, row, 3, c.getTableSummary(), false);
-                row++;
-            }
-        }
-    }
-
-    private void setCell(XWPFTable table, int row, int col, String text, boolean bold) {
-        XWPFTableCell cell = table.getRow(row).getCell(col);
-        XWPFParagraph p = cell.getParagraphArray(0);
-        if (p == null) p = cell.addParagraph();
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setBold(bold);
-        run.setFontSize(10);
-        run.setFontFamily("Arial");
-    }
-
-    private void setCellSpan(XWPFTable table, int row, String text, int span) {
-        XWPFTableRow tableRow = table.getRow(row);
-        XWPFTableCell firstCell = tableRow.getCell(0);
-        XWPFParagraph p = firstCell.getParagraphArray(0);
-        if (p == null) p = firstCell.addParagraph();
-        XWPFRun run = p.createRun();
-        run.setText(text);
-        run.setBold(true);
-        run.setFontSize(10);
-        run.setFontFamily("Arial");
-
-        // Merge cells
-        CTTcPr tcPr = firstCell.getCTTc().addNewTcPr();
-        tcPr.addNewGridSpan().setVal(java.math.BigInteger.valueOf(span));
-
-        for (int i = 1; i < span; i++) {
-            XWPFTableCell mergedCell = tableRow.getCell(i);
-            if (mergedCell != null) {
-                CTTcPr pr = mergedCell.getCTTc().addNewTcPr();
-                pr.addNewHMerge().setVal(STMerge.CONTINUE);
-            }
-        }
-    }
-
-    private void addPricingSection(XWPFDocument doc, Pricing pricing) {
-        // Klady
-        if (pricing.getPositives() != null && !pricing.getPositives().isBlank()) {
-            addText(doc, "Kladné stránky nemovitosti:", true);
-            for (String line : pricing.getPositives().split("\n")) {
-                if (!line.isBlank()) {
-                    XWPFParagraph p = doc.createParagraph();
-                    p.setIndentationLeft(360);
-                    XWPFRun run = p.createRun();
-                    run.setText("• " + line.trim());
-                    run.setFontSize(11);
-                    run.setFontFamily("Arial");
-                }
-            }
-        }
-
-        // Zápory
-        if (pricing.getNegatives() != null && !pricing.getNegatives().isBlank()) {
-            addText(doc, "Záporné stránky nemovitosti:", true);
-            for (String line : pricing.getNegatives().split("\n")) {
-                if (!line.isBlank()) {
-                    XWPFParagraph p = doc.createParagraph();
-                    p.setIndentationLeft(360);
-                    XWPFRun run = p.createRun();
-                    run.setText("• " + line.trim());
-                    run.setFontSize(11);
-                    run.setFontFamily("Arial");
-                }
-            }
-        }
-
-        // Doporučení
-        if (pricing.getRecommendation() != null && !pricing.getRecommendation().isBlank()) {
-            addText(doc, "Doporučení:", true);
-            addText(doc, pricing.getRecommendation(), false);
-        }
-
-        // Cenové rozmezí
-        if (pricing.getPriceFrom() > 0 && pricing.getPriceTo() > 0) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setSpacingBefore(200);
-            XWPFRun run = p.createRun();
-            run.setText("Doporučené cenové rozmezí: " + pricing.getFormattedRange());
-            run.setBold(true);
-            run.setFontSize(12);
-            run.setFontFamily("Arial");
-        }
-
-        // Počáteční cena
-        if (pricing.getStartPrice() > 0) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setSpacingBefore(100);
-            XWPFRun run = p.createRun();
-            run.setText("Počáteční prodejní cena: " + pricing.getFormattedStartPrice());
-            run.setBold(true);
-            run.setUnderline(UnderlinePatterns.SINGLE);
-            run.setFontSize(12);
-            run.setFontFamily("Arial");
-        }
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/PdfExportService.java
-----------------------------------------
-package cz.stabuilder.service;
-
-import com.itextpdf.io.font.PdfEncodings;
-import com.itextpdf.io.image.ImageDataFactory;
-import com.itextpdf.kernel.colors.ColorConstants;
-import com.itextpdf.kernel.colors.DeviceRgb;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.geom.PageSize;
-import com.itextpdf.kernel.pdf.PdfDocument;
-import com.itextpdf.kernel.pdf.PdfWriter;
-import com.itextpdf.layout.Document;
-import com.itextpdf.layout.borders.Border;
-import com.itextpdf.layout.borders.SolidBorder;
-import com.itextpdf.layout.element.*;
-import com.itextpdf.layout.element.Cell;
-import com.itextpdf.layout.element.Image;
-import com.itextpdf.layout.element.Table;
-import com.itextpdf.layout.properties.HorizontalAlignment;
-import com.itextpdf.layout.properties.TextAlignment;
-import com.itextpdf.layout.properties.UnitValue;
-import com.itextpdf.layout.properties.VerticalAlignment;
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.Pricing;
-import cz.stabuilder.model.StaProject;
-import cz.stabuilder.model.Subject;
-import org.springframework.stereotype.Service;
-
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-
-@Service
-public class PdfExportService {
-
-    // Barvy
-    private static final DeviceRgb COLOR_PRIMARY = new DeviceRgb(0, 56, 101);      // tmavě modrá
-    private static final DeviceRgb COLOR_ACCENT = new DeviceRgb(200, 16, 46);       // RE/MAX červená
-    private static final DeviceRgb COLOR_LIGHT_BG = new DeviceRgb(230, 240, 250);   // světle modrý bg
-    private static final DeviceRgb COLOR_TABLE_HEADER = new DeviceRgb(0, 56, 101);
-    private static final DeviceRgb COLOR_TABLE_OFFER = new DeviceRgb(220, 235, 250);
-    private static final DeviceRgb COLOR_TABLE_SOLD = new DeviceRgb(220, 245, 220);
-    private static final DeviceRgb COLOR_HIGHLIGHT = new DeviceRgb(255, 255, 150);
-    private static final DeviceRgb COLOR_GRAY = new DeviceRgb(100, 100, 100);
-
-    private final PhotoService photoService;
-
-    public PdfExportService(PhotoService photoService) {
-        this.photoService = photoService;
-    }
-
-    /**
-     * Vygenerovat PDF z projektu STA.
-     * @return byte[] PDF souboru
-     */
-    public byte[] generatePdf(StaProject project) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-
-        PdfWriter writer = new PdfWriter(baos);
-        PdfDocument pdf = new PdfDocument(writer);
-        Document doc = new Document(pdf, PageSize.A4);
-        doc.setMargins(40, 40, 40, 40);
-
-        // Font - použijeme Helvetica (built-in, podporuje základní latin)
-        // Pro plnou CZ diakritiku by bylo třeba přidat vlastní TTF font
-        PdfFont fontRegular = PdfFontFactory.createFont("Helvetica", PdfEncodings.CP1250);
-        PdfFont fontBold = PdfFontFactory.createFont("Helvetica-Bold", PdfEncodings.CP1250);
-
-        doc.setFont(fontRegular);
-        doc.setFontSize(10);
-
-        // === STRANA 1: Titulní strana ===
-        addTitlePage(doc, project, fontRegular, fontBold);
-
-        // === STRANA 2+: Fotky předmětu prodeje ===
-        if (!project.getSubject().getPhotoFilenames().isEmpty()) {
-            doc.add(new AreaBreak());
-            addSubjectPhotosPage(doc, project.getSubject(), fontBold);
-        }
-
-        // === Srovnatelné nemovitosti ===
-        List<ComparableProperty> offers = project.getComparables().stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.OFFER).toList();
-        List<ComparableProperty> sold = project.getComparables().stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.SOLD).toList();
-
-        if (!offers.isEmpty()) {
-            doc.add(new AreaBreak());
-            addSectionTitle(doc, "Podobné nabídky aktuálně v prodeji", fontBold);
-            for (ComparableProperty comp : offers) {
-                addComparablePage(doc, comp, fontRegular, fontBold, false);
-            }
-        }
-
-        if (!sold.isEmpty()) {
-            doc.add(new AreaBreak());
-            addSectionTitle(doc, "Nedávno prodané nemovitosti", fontBold);
-            for (ComparableProperty comp : sold) {
-                addComparablePage(doc, comp, fontRegular, fontBold, true);
-            }
-        }
-
-        // === Srovnávací tabulka ===
-        if (!project.getComparables().isEmpty()) {
-            doc.add(new AreaBreak());
-            addComparisonTable(doc, project, fontRegular, fontBold);
-        }
-
-        // === Cenové doporučení ===
-        doc.add(new AreaBreak());
-        addPricingPage(doc, project, fontRegular, fontBold);
-
-        // === Patička s kontaktem ===
-        addAgentFooter(doc, project, fontRegular, fontBold);
-
-        doc.close();
-        return baos.toByteArray();
-    }
-
-    // ==================== TITLE PAGE ====================
-
-    private void addTitlePage(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
-        Subject subject = project.getSubject();
-
-        doc.add(new Paragraph("\n\n\n"));
-
-        // Nadpis
-        doc.add(new Paragraph("SROVNÁVACÍ TRŽNÍ ANALÝZA")
-                .setFont(fontBold)
-                .setFontSize(26)
-                .setFontColor(COLOR_PRIMARY)
-                .setTextAlignment(TextAlignment.CENTER));
-
-        doc.add(new Paragraph("\n"));
-
-        // Datum
-        String dateStr = subject.getDate() != null
-                ? subject.getDate().format(DateTimeFormatter.ofPattern("d.M.yyyy"))
-                : "";
-        doc.add(new Paragraph(dateStr)
-                .setFont(fontBold)
-                .setFontSize(14)
-                .setTextAlignment(TextAlignment.CENTER));
-
-        doc.add(new Paragraph("\n"));
-
-        // Info tabulka
-        Table infoTable = new Table(UnitValue.createPercentArray(new float[]{35, 65}))
-                .setWidth(UnitValue.createPercentValue(80))
-                .setHorizontalAlignment(HorizontalAlignment.CENTER);
-
-        addInfoRow(infoTable, "Vypracováno pro:", subject.getClientName(), fontBold, fontRegular);
-        addInfoRow(infoTable, "Předmět prodeje:", buildSubjectLine(subject), fontBold, fontRegular);
-        addInfoRow(infoTable, "Adresa:", subject.getAddress(), fontBold, fontRegular);
-
-        doc.add(infoTable);
-
-        doc.add(new Paragraph("\n"));
-
-        // Popis nemovitosti
-        if (!subject.getDescription().isBlank()) {
-            doc.add(new Paragraph("Popis nemovitosti:")
-                    .setFont(fontBold)
-                    .setFontSize(12)
-                    .setFontColor(COLOR_PRIMARY));
-            doc.add(new Paragraph(subject.getDescription())
-                    .setFontSize(10)
-                    .setFontColor(COLOR_GRAY));
-        }
-    }
-
-    private String buildSubjectLine(Subject s) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("byt ").append(s.getDisposition());
-        if (!s.getOwnership().isBlank()) sb.append(", ").append(s.getOwnership());
-        if (!s.getArea().isBlank()) sb.append(", ").append(s.getArea()).append(" m2");
-        if (!s.getExtras().isBlank()) sb.append(" + ").append(s.getExtras());
-        return sb.toString();
-    }
-
-    private void addInfoRow(Table table, String label, String value, PdfFont fontBold, PdfFont fontRegular) {
-        table.addCell(new Cell().add(new Paragraph(label).setFont(fontBold).setFontSize(11))
-                .setBorder(Border.NO_BORDER).setPaddingBottom(4));
-        table.addCell(new Cell().add(new Paragraph(value).setFont(fontRegular).setFontSize(11))
-                .setBorder(Border.NO_BORDER).setPaddingBottom(4));
-    }
-
-    // ==================== SUBJECT PHOTOS ====================
-
-    private void addSubjectPhotosPage(Document doc, Subject subject, PdfFont fontBold) {
-        doc.add(new Paragraph("Fotky nemovitosti")
-                .setFont(fontBold)
-                .setFontSize(14)
-                .setFontColor(COLOR_PRIMARY));
-
-        addPhotoGrid(doc, subject.getPhotoFilenames());
-    }
-
-    // ==================== COMPARABLE PROPERTY ====================
-
-    private void addComparablePage(Document doc, ComparableProperty comp,
-                                    PdfFont fontRegular, PdfFont fontBold, boolean isSold) {
-        doc.add(new Paragraph("\n"));
-
-        // Nadpis nemovitosti
-        String title = String.format("Byt %s, %s m2, %s, %s – %s",
-                comp.getDisposition(), comp.getArea(), comp.getFullLocation(),
-                comp.getCity(), comp.getDistrict());
-        doc.add(new Paragraph(title)
-                .setFont(fontBold)
-                .setFontSize(12)
-                .setFontColor(COLOR_PRIMARY));
-
-        // Cena
-        String priceLabel;
-        if (isSold) {
-            priceLabel = String.format("Prodáno za %,d Kč", comp.getPriceNumeric()).replace(",", ".");
-            if (!comp.getSoldDate().isBlank()) {
-                priceLabel += " v " + comp.getSoldDate();
-            }
-            if (!comp.getSoldDuration().isBlank()) {
-                priceLabel += " za " + comp.getSoldDuration();
-            }
-        } else {
-            priceLabel = String.format("%,d Kč", comp.getPriceNumeric()).replace(",", ".");
-        }
-        doc.add(new Paragraph(priceLabel)
-                .setFont(fontBold)
-                .setFontSize(14)
-                .setFontColor(isSold ? new DeviceRgb(46, 125, 50) : COLOR_ACCENT));
-
-        // Fotky (grid 3x2)
-        if (!comp.getPhotoFilenames().isEmpty()) {
-            addPhotoGrid(doc, comp.getPhotoFilenames());
-        }
-
-        // Popis z inzerátu se zvýrazněnými částmi
-        if (!comp.getDescriptionText().isBlank()) {
-            String descText = comp.getDescriptionText();
-
-            // Zvýraznit highlights v textu
-            Paragraph descParagraph = new Paragraph();
-            descParagraph.setFontSize(9).setFontColor(COLOR_GRAY);
-
-            if (comp.getHighlights().isEmpty()) {
-                descParagraph.add(new Text(descText).setFont(fontRegular));
-            } else {
-                // Jednoduché zvýraznění - hledáme highlights v textu
-                String remaining = descText;
-                for (String highlight : comp.getHighlights()) {
-                    int idx = remaining.toLowerCase().indexOf(highlight.toLowerCase());
-                    if (idx >= 0) {
-                        if (idx > 0) {
-                            descParagraph.add(new Text(remaining.substring(0, idx)).setFont(fontRegular));
-                        }
-                        descParagraph.add(new Text(remaining.substring(idx, idx + highlight.length()))
-                                .setFont(fontBold)
-                                .setBackgroundColor(COLOR_HIGHLIGHT));
-                        remaining = remaining.substring(idx + highlight.length());
-                    }
-                }
-                if (!remaining.isEmpty()) {
-                    descParagraph.add(new Text(remaining).setFont(fontRegular));
-                }
-            }
-            doc.add(descParagraph);
-        }
-
-        // Zpětná vazba od makléře
-        if (!comp.getBrokerFeedback().isBlank()) {
-            doc.add(new Paragraph("\n"));
-            doc.add(new Paragraph("Zpětná vazba od makléře:")
-                    .setFont(fontBold)
-                    .setFontSize(10)
-                    .setUnderline()
-                    .setFontColor(COLOR_PRIMARY));
-            doc.add(new Paragraph(comp.getBrokerFeedback())
-                    .setFontSize(9)
-                    .setFontColor(COLOR_GRAY)
-                    .setItalic());
-        }
-    }
-
-    // ==================== PHOTO GRID ====================
-
-    private void addPhotoGrid(Document doc, List<String> filenames) {
-        if (filenames.isEmpty()) return;
-
-        Table photoTable = new Table(UnitValue.createPercentArray(new float[]{33, 33, 33}))
-                .setWidth(UnitValue.createPercentValue(100))
-                .setMarginTop(8)
-                .setMarginBottom(8);
-
-        for (String filename : filenames) {
-            Cell cell = new Cell().setBorder(Border.NO_BORDER).setPadding(3);
-            try {
-                byte[] imageBytes = photoService.getPhotoBytes(filename);
-                Image img = new Image(ImageDataFactory.create(imageBytes));
-                img.setWidth(UnitValue.createPercentValue(100));
-                img.setAutoScale(true);
-                cell.add(img);
-            } catch (IOException e) {
-                // Fotka nenalezena - ukážeme placeholder text
-                cell.add(new Paragraph("[Fotka: " + filename + "]")
-                        .setFontSize(8)
-                        .setFontColor(ColorConstants.GRAY));
-            }
-            photoTable.addCell(cell);
-        }
-
-        // Doplnit prázdné buňky pro kompletní řádek
-        int remaining = (3 - filenames.size() % 3) % 3;
-        for (int i = 0; i < remaining; i++) {
-            photoTable.addCell(new Cell().setBorder(Border.NO_BORDER));
-        }
-
-        doc.add(photoTable);
-    }
-
-    // ==================== COMPARISON TABLE ====================
-
-    private void addComparisonTable(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
-        addSectionTitle(doc, "Nabízené / prodané byty – srovnání", fontBold);
-        doc.add(new Paragraph("Porovnatelné panelové byty v lokalitě " +
-                project.getSubject().getAddress())
-                .setFontSize(10).setFontColor(COLOR_GRAY).setMarginBottom(8));
-
-        Table table = new Table(UnitValue.createPercentArray(new float[]{30, 18, 17, 35}))
-                .setWidth(UnitValue.createPercentValue(100));
-
-        // Hlavička
-        addTableHeaderCell(table, "Lokalita", fontBold);
-        addTableHeaderCell(table, "Prodejní cena", fontBold);
-        addTableHeaderCell(table, "Cena za m2", fontBold);
-        addTableHeaderCell(table, "Výhody / Nevýhody", fontBold);
-
-        // Nabídka
-        List<ComparableProperty> offers = project.getComparables().stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.OFFER).toList();
-        if (!offers.isEmpty()) {
-            Cell labelCell = new Cell(1, 4)
-                    .add(new Paragraph("Nabídka").setFont(fontBold).setFontSize(9))
-                    .setBackgroundColor(COLOR_TABLE_OFFER)
-                    .setBorder(new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f));
-            table.addCell(labelCell);
-
-            for (ComparableProperty c : offers) {
-                addTableRow(table, c, fontRegular, fontBold, false);
-            }
-        }
-
-        // Prodáno
-        List<ComparableProperty> sold = project.getComparables().stream()
-                .filter(c -> c.getCategory() == ComparableProperty.Category.SOLD).toList();
-        if (!sold.isEmpty()) {
-            Cell labelCell = new Cell(1, 4)
-                    .add(new Paragraph("Prodáno").setFont(fontBold).setFontSize(9))
-                    .setBackgroundColor(COLOR_TABLE_SOLD)
-                    .setBorder(new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f));
-            table.addCell(labelCell);
-
-            for (ComparableProperty c : sold) {
-                addTableRow(table, c, fontRegular, fontBold, true);
-            }
-        }
-
-        doc.add(table);
-    }
-
-    private void addTableHeaderCell(Table table, String text, PdfFont fontBold) {
-        table.addHeaderCell(new Cell()
-                .add(new Paragraph(text).setFont(fontBold).setFontSize(9).setFontColor(ColorConstants.WHITE))
-                .setBackgroundColor(COLOR_TABLE_HEADER)
-                .setBorder(new SolidBorder(ColorConstants.WHITE, 0.5f))
-                .setPadding(6));
-    }
-
-    private void addTableRow(Table table, ComparableProperty c, PdfFont fontRegular, PdfFont fontBold, boolean isSold) {
-        SolidBorder cellBorder = new SolidBorder(ColorConstants.LIGHT_GRAY, 0.5f);
-
-        // Lokalita
-        Paragraph locP = new Paragraph()
-                .add(new Text(c.getStreet() + ",\n").setFont(fontBold).setFontSize(9))
-                .add(new Text(c.getDisposition() + ", " + c.getArea() + " m2").setFont(fontRegular).setFontSize(8));
-        table.addCell(new Cell().add(locP).setBorder(cellBorder).setPadding(5));
-
-        // Cena
-        String priceStr = String.format("%,d Kč", c.getPriceNumeric()).replace(",", ".");
-        table.addCell(new Cell()
-                .add(new Paragraph(priceStr).setFont(fontBold).setFontSize(9))
-                .setBorder(cellBorder).setPadding(5));
-
-        // Cena za m2
-        String priceM2 = String.format("%,d Kč", c.getPricePerM2()).replace(",", ".");
-        table.addCell(new Cell()
-                .add(new Paragraph(priceM2).setFont(fontBold).setFontSize(9))
-                .setBorder(cellBorder).setPadding(5));
-
-        // Výhody / Nevýhody
-        StringBuilder details = new StringBuilder();
-        if (!c.getFloor().isBlank()) details.append(c.getFloor()).append(", ");
-        if (!c.getExtras().isBlank()) details.append(c.getExtras()).append(",\n");
-        if (!c.getCondition().isBlank()) details.append(c.getCondition());
-        if (isSold && !c.getSoldDate().isBlank()) {
-            details.append("\nProdáno v ").append(c.getSoldDate());
-            if (!c.getSoldDuration().isBlank()) details.append(" za ").append(c.getSoldDuration());
-        }
-        table.addCell(new Cell()
-                .add(new Paragraph(details.toString()).setFont(fontRegular).setFontSize(8))
-                .setBorder(cellBorder).setPadding(5));
-    }
-
-    // ==================== PRICING PAGE ====================
-
-    private void addPricingPage(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
-        Pricing pricing = project.getPricing();
-
-        addSectionTitle(doc, "Návrh pásma prodejní ceny Vaší nemovitosti", fontBold);
-
-        // Klady
-        if (!pricing.getPositives().isEmpty()) {
-            doc.add(new Paragraph("Kladné stránky nemovitosti:")
-                    .setFont(fontBold).setFontSize(11).setUnderline().setMarginTop(12));
-            for (String pos : pricing.getPositives()) {
-                doc.add(new Paragraph("• " + pos).setFontSize(10).setMarginLeft(20));
-            }
-        }
-
-        // Zápory
-        if (!pricing.getNegatives().isEmpty()) {
-            doc.add(new Paragraph("Záporné stránky nemovitosti:")
-                    .setFont(fontBold).setFontSize(11).setUnderline().setMarginTop(12));
-            for (String neg : pricing.getNegatives()) {
-                doc.add(new Paragraph("• " + neg).setFontSize(10).setMarginLeft(20));
-            }
-        }
-
-        // Doporučení
-        if (!pricing.getRecommendation().isBlank()) {
-            doc.add(new Paragraph("Doporučení:")
-                    .setFont(fontBold).setFontSize(11).setMarginTop(12));
-            doc.add(new Paragraph("• " + pricing.getRecommendation())
-                    .setFontSize(10).setMarginLeft(20));
-        }
-
-        // Cenové rozmezí
-        doc.add(new Paragraph("\n"));
-        doc.add(new Paragraph("Vzhledem k výše uvedeným skutečnostem a nabídkám v dané lokalitě doporučuji cenové rozmezí pro prodej Vaší nemovitosti")
-                .setFontSize(11).setFontColor(COLOR_GRAY));
-
-        String range = pricing.getPriceRangeFormatted();
-        if (!range.isBlank()) {
-            doc.add(new Paragraph("od " + range)
-                    .setFont(fontBold)
-                    .setFontSize(16)
-                    .setFontColor(COLOR_PRIMARY)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(12));
-        }
-
-        String startPrice = pricing.getStartPriceFormatted();
-        if (!startPrice.isBlank()) {
-            doc.add(new Paragraph("Jako počáteční prodejní cenu navrhuji začít s cenou " + startPrice)
-                    .setFont(fontBold)
-                    .setFontSize(12)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(8)
-                    .setUnderline());
-            doc.add(new Paragraph("s případným postupným upravováním.")
-                    .setFontSize(10)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setFontColor(COLOR_GRAY));
-        }
-    }
-
-    // ==================== AGENT FOOTER ====================
-
-    private void addAgentFooter(Document doc, StaProject project, PdfFont fontRegular, PdfFont fontBold) {
-        doc.add(new Paragraph("\n\n"));
-        doc.add(new Paragraph("Vypracoval").setFontSize(10).setItalic().setFontColor(COLOR_GRAY));
-
-        Table footer = new Table(UnitValue.createPercentArray(new float[]{50, 50}))
-                .setWidth(UnitValue.createPercentValue(100))
-                .setMarginTop(8);
-
-        // Kontaktní info
-        Paragraph contactInfo = new Paragraph()
-                .add(new Text(project.getAgentName() + "\n").setFont(fontBold).setFontSize(12))
-                .add(new Text(project.getAgentTitle() + "\n").setFont(fontRegular).setFontSize(10))
-                .add(new Text("M: " + project.getAgentPhone() + "\n").setFontSize(9))
-                .add(new Text("E: " + project.getAgentEmail() + "\n").setFontSize(9))
-                .add(new Text(project.getAgencyName() + "\n").setFont(fontBold).setFontSize(10))
-                .add(new Text(project.getAgencyAddress() + "\n").setFontSize(8))
-                .add(new Text(project.getAgentWebsite()).setFontSize(9).setFontColor(COLOR_PRIMARY));
-
-        footer.addCell(new Cell().add(contactInfo).setBorder(Border.NO_BORDER));
-        footer.addCell(new Cell().setBorder(Border.NO_BORDER)); // Placeholder for logo
-
-        doc.add(footer);
-    }
-
-    // ==================== HELPERS ====================
-
-    private void addSectionTitle(Document doc, String title, PdfFont fontBold) {
-        doc.add(new Paragraph(title)
-                .setFont(fontBold)
-                .setFontSize(16)
-                .setFontColor(COLOR_PRIMARY)
-                .setMarginBottom(12)
-                .setBorderBottom(new SolidBorder(COLOR_PRIMARY, 2)));
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/PhotoService.java
-----------------------------------------
-package cz.stabuilder.service;
-
-import jakarta.annotation.PostConstruct;
-import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.nio.file.*;
-import java.util.UUID;
-
-@Service
-public class PhotoService {
-
-    private static final String UPLOAD_DIR = "data/photos";
-    private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-
-    @PostConstruct
-    public void init() throws IOException {
-        Files.createDirectories(Path.of(UPLOAD_DIR));
-    }
-
-    /**
-     * Uložit nahraný soubor a vrátit jeho unikátní název.
-     */
-    public String savePhoto(MultipartFile file) throws IOException {
-        if (file.isEmpty()) {
-            throw new IOException("Soubor je prázdný");
-        }
-        if (file.getSize() > MAX_FILE_SIZE) {
-            throw new IOException("Soubor je příliš velký (max 10 MB)");
-        }
-
-        String originalName = file.getOriginalFilename();
-        String extension = getExtension(originalName);
-        if (!isAllowedExtension(extension)) {
-            throw new IOException("Nepodporovaný formát souboru: " + extension);
-        }
-
-        String uniqueName = UUID.randomUUID().toString().substring(0, 12) + "." + extension;
-        Path targetPath = Path.of(UPLOAD_DIR, uniqueName);
-        file.transferTo(targetPath);
-
-        return uniqueName;
-    }
-
-    /**
-     * Získat cestu k fotce.
-     */
-    public Path getPhotoPath(String filename) {
-        return Path.of(UPLOAD_DIR, filename);
-    }
-
-    /**
-     * Ověřit existenci fotky.
-     */
-    public boolean exists(String filename) {
-        return Files.exists(Path.of(UPLOAD_DIR, filename));
-    }
-
-    /**
-     * Smazat fotku.
-     */
-    public boolean deletePhoto(String filename) throws IOException {
-        return Files.deleteIfExists(Path.of(UPLOAD_DIR, filename));
-    }
-
-    /**
-     * Získat byte[] fotky pro PDF export.
-     */
-    public byte[] getPhotoBytes(String filename) throws IOException {
-        Path path = Path.of(UPLOAD_DIR, filename);
-        if (!Files.exists(path)) {
-            throw new IOException("Fotka nenalezena: " + filename);
-        }
-        return Files.readAllBytes(path);
-    }
-
-    private String getExtension(String filename) {
-        if (filename == null || !filename.contains(".")) return "";
-        return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
-    }
-
-    private boolean isAllowedExtension(String ext) {
-        return ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png")
-                || ext.equals("webp") || ext.equals("gif");
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/ProjectService.java
-----------------------------------------
-package cz.stabuilder.service;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import cz.stabuilder.model.StaProject;
-import jakarta.annotation.PostConstruct;
-import org.springframework.stereotype.Service;
-
-import java.io.IOException;
-import java.nio.file.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Stream;
-
-@Service
-public class ProjectService {
-
-    private static final String DATA_DIR = "data/projects";
-    private final ObjectMapper mapper;
-
-    public ProjectService() {
-        this.mapper = new ObjectMapper();
-        this.mapper.registerModule(new JavaTimeModule());
-        this.mapper.enable(SerializationFeature.INDENT_OUTPUT);
-        this.mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-    }
-
-    @PostConstruct
-    public void init() throws IOException {
-        Files.createDirectories(Path.of(DATA_DIR));
-    }
-
-    /**
-     * Uložit projekt do JSON souboru.
-     */
-    public void save(StaProject project) throws IOException {
-        String filename = sanitizeFilename(project.getProjectName());
-        if (filename.isBlank()) {
-            filename = "projekt_" + System.currentTimeMillis();
-        }
-        Path path = Path.of(DATA_DIR, filename + ".json");
-        mapper.writeValue(path.toFile(), project);
-    }
-
-    /**
-     * Načíst projekt ze souboru.
-     */
-    public StaProject load(String name) throws IOException {
-        Path path = Path.of(DATA_DIR, name + ".json");
-        if (!Files.exists(path)) {
-            throw new IOException("Projekt nenalezen: " + name);
-        }
-        return mapper.readValue(path.toFile(), StaProject.class);
-    }
-
-    /**
-     * Seznam všech uložených projektů.
-     */
-    public List<String> listProjects() throws IOException {
-        List<String> projects = new ArrayList<>();
-        Path dir = Path.of(DATA_DIR);
-        if (Files.exists(dir)) {
-            try (Stream<Path> stream = Files.list(dir)) {
-                stream.filter(p -> p.toString().endsWith(".json"))
-                      .forEach(p -> {
-                          String name = p.getFileName().toString();
-                          projects.add(name.substring(0, name.length() - 5));
-                      });
-            }
-        }
-        return projects;
-    }
-
-    /**
-     * Smazat projekt.
-     */
-    public boolean delete(String name) throws IOException {
-        Path path = Path.of(DATA_DIR, name + ".json");
-        return Files.deleteIfExists(path);
-    }
-
-    /**
-     * Serialize project to JSON string (for API responses).
-     */
-    public String toJson(StaProject project) throws IOException {
-        return mapper.writeValueAsString(project);
-    }
-
-    /**
-     * Deserialize project from JSON string.
-     */
-    public StaProject fromJson(String json) throws IOException {
-        return mapper.readValue(json, StaProject.class);
-    }
-
-    private String sanitizeFilename(String name) {
-        if (name == null) return "";
-        return name.replaceAll("[^a-zA-Z0-9áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ _-]", "")
-                    .replaceAll("\\s+", "_")
-                    .toLowerCase();
-    }
-}
-
---------------------------------------------------------------------------------
-
-FILE: src/main/java/cz/stabuilder/service/StaService.java
-----------------------------------------
-package cz.stabuilder.service;
-
-import cz.stabuilder.model.ComparableProperty;
-import cz.stabuilder.model.Pricing;
-import cz.stabuilder.model.StaProject;
-import cz.stabuilder.model.Subject;
-import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.UUID;
-
-/**
- * Služba pro správu STA projektu.
- * Drží aktuální projekt v paměti (single-user app).
- * Fotky ukládá na disk do uploads/.
- */
-@Service
-public class StaService {
-
-    private static final Path UPLOAD_DIR = Paths.get("uploads");
-
-    private StaProject project = new StaProject();
-
-    public StaService() {
-        try {
-            Files.createDirectories(UPLOAD_DIR);
-        } catch (IOException e) {
-            throw new RuntimeException("Nelze vytvořit adresář pro uploady", e);
-        }
-    }
-
-    // --- Projekt ---
-
-    public StaProject getProject() {
-        return project;
-    }
-
-    public void resetProject() {
-        project = new StaProject();
-    }
-
-    // --- Předmět prodeje ---
-
-    public Subject getSubject() {
-        return project.getSubject();
-    }
-
-    public void updateSubject(Subject updated) {
-        // Zachová existující fotky pokud nové nejsou dodány
-        if (updated.getPhotoFilenames() == null || updated.getPhotoFilenames().isEmpty()) {
-            updated.setPhotoFilenames(project.getSubject().getPhotoFilenames());
-        }
-        project.setSubject(updated);
-    }
-
-    // --- Srovnatelné nemovitosti ---
-
-    public ComparableProperty addComparable() {
-        ComparableProperty comp = new ComparableProperty();
-        project.addComparable(comp);
-        return comp;
-    }
-
-    public ComparableProperty updateComparable(Long id, ComparableProperty updated) {
-        ComparableProperty existing = project.findComparable(id);
-        if (existing == null) return null;
-
-        existing.setCategory(updated.getCategory());
-        existing.setDisposition(updated.getDisposition());
-        existing.setAreaSqm(updated.getAreaSqm());
-        existing.setStreet(updated.getStreet());
-        existing.setDistrict(updated.getDistrict());
-        existing.setPriceKc(updated.getPriceKc());
-        existing.setFloor(updated.getFloor());
-        existing.setExtras(updated.getExtras());
-        existing.setSoldDate(updated.getSoldDate());
-        existing.setSoldDuration(updated.getSoldDuration());
-        existing.setDescriptionText(updated.getDescriptionText());
-        existing.setHighlights(updated.getHighlights());
-        existing.setBrokerFeedback(updated.getBrokerFeedback());
-
-        // Fotky se mění jen přes upload endpoint
-        return existing;
-    }
-
-    public boolean removeComparable(Long id) {
-        return project.removeComparable(id);
-    }
-
-    // --- Cenové doporučení ---
-
-    public Pricing getPricing() {
-        return project.getPricing();
-    }
-
-    public void updatePricing(Pricing updated) {
-        project.setPricing(updated);
-    }
-
-    // --- Fotky ---
-
-    /**
-     * Uloží nahraný soubor a vrátí jeho unikátní název.
-     */
-    public String savePhoto(MultipartFile file) throws IOException {
-        String originalName = file.getOriginalFilename();
-        String ext = "";
-        if (originalName != null && originalName.contains(".")) {
-            ext = originalName.substring(originalName.lastIndexOf('.'));
-        }
-        String uniqueName = UUID.randomUUID().toString().substring(0, 8) + ext;
-
-        Path target = UPLOAD_DIR.resolve(uniqueName);
-        file.transferTo(target.toFile());
-
-        return uniqueName;
-    }
-
-    /**
-     * Vrátí cestu k fotce.
-     */
-    public Path getPhotoPath(String filename) {
-        return UPLOAD_DIR.resolve(filename);
-    }
-
-    /**
-     * Přidá fotku k předmětu prodeje.
-     */
-    public void addSubjectPhoto(String filename) {
-        if (project.getSubject().getPhotoFilenames().size() < 6) {
-            project.getSubject().getPhotoFilenames().add(filename);
-        }
-    }
-
-    /**
-     * Odstraní fotku z předmětu prodeje.
-     */
-    public void removeSubjectPhoto(int index) {
-        var photos = project.getSubject().getPhotoFilenames();
-        if (index >= 0 && index < photos.size()) {
-            photos.remove(index);
-        }
-    }
-
-    /**
-     * Přidá fotku ke srovnatelné nemovitosti.
-     */
-    public void addComparablePhoto(Long compId, String filename) {
-        ComparableProperty comp = project.findComparable(compId);
-        if (comp != null && comp.getPhotoFilenames().size() < 6) {
-            comp.getPhotoFilenames().add(filename);
-        }
-    }
-
-    /**
-     * Odstraní fotku ze srovnatelné nemovitosti.
-     */
-    public void removeComparablePhoto(Long compId, int index) {
-        ComparableProperty comp = project.findComparable(compId);
-        if (comp != null) {
-            var photos = comp.getPhotoFilenames();
-            if (index >= 0 && index < photos.size()) {
-                photos.remove(index);
-            }
-        }
-    }
-}
-
 --------------------------------------------------------------------------------
 

@@ -42,7 +42,7 @@ public class StaController {
         this.projectService = projectService;
     }
 
-    // ==================== PROJEKTY (save/load/list/delete) ====================
+    // ==================== PROJEKTY ====================
 
     @PostMapping("/projects")
     public Map<String, String> saveProject(@RequestBody StaProject project) throws IOException {
@@ -58,8 +58,7 @@ public class StaController {
     @GetMapping("/projects/{name}")
     public ResponseEntity<StaProject> loadProject(@PathVariable String name) {
         try {
-            StaProject project = projectService.load(name);
-            return ResponseEntity.ok(project);
+            return ResponseEntity.ok(projectService.load(name));
         } catch (IOException e) {
             return ResponseEntity.notFound().build();
         }
@@ -115,9 +114,8 @@ public class StaController {
     @PostMapping("/export/pdf")
     public ResponseEntity<byte[]> exportPdf(@RequestBody StaProject project) throws IOException {
         byte[] pdf = pdfExportService.generatePdf(project);
-        String filename = "STA_" + safeName(project.getSubject().getClientName()) + ".pdf";
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename(project, "pdf") + "\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(pdf);
     }
@@ -125,19 +123,17 @@ public class StaController {
     @PostMapping("/export/pdf/preview")
     public ResponseEntity<byte[]> previewPdf(@RequestBody StaProject project) throws IOException {
         byte[] pdf = pdfExportService.generatePdf(project);
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .body(pdf);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF).body(pdf);
     }
 
     // ==================== EXPORT DOCX ====================
 
-    @GetMapping("/export/docx")
-    public ResponseEntity<byte[]> exportDocx() throws IOException {
-        byte[] docx = docxExportService.generateDocx(staService.getProject());
-        String filename = "STA_" + safeName(staService.getSubject().getClientName()) + ".docx";
+    /** DOCX export z klientského stavu (POST). */
+    @PostMapping("/export/docx")
+    public ResponseEntity<byte[]> exportDocxPost(@RequestBody StaProject project) throws IOException {
+        byte[] docx = docxExportService.generateDocx(project);
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename(project, "docx") + "\"")
                 .contentType(MediaType.parseMediaType(
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
                 .body(docx);
@@ -148,7 +144,7 @@ public class StaController {
         return staService.getProject();
     }
 
-    // ==================== LEGACY (stará API z StaService) ====================
+    // ==================== LEGACY ====================
 
     @GetMapping("/project")
     public StaProject getProject() {
@@ -162,6 +158,12 @@ public class StaController {
     }
 
     // === Helper ===
+
+    private static String exportFilename(StaProject project, String ext) {
+        String client = project.getSubject() != null ? project.getSubject().getClientName() : null;
+        String safe = safeName(client);
+        return "STA_" + safe + "." + ext;
+    }
 
     private static String safeName(String name) {
         if (name == null || name.isBlank()) return "export";
