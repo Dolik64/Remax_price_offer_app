@@ -49,7 +49,6 @@ function updateCompField(compId, field, value) {
     const comp = getComp(compId);
     comp[field] = value;
 
-    // Dynamicky upravíme pouze hlavičku, abychom nepřekreslovali celý DOM a neztratili Tab focus
     const titleEl = document.getElementById('title-' + compId);
     const subtitleEl = document.getElementById('subtitle-' + compId);
 
@@ -132,16 +131,21 @@ function renderCompCard(comp) {
             </div>
         </div>
         <div class="comp-body" id="body-${comp.id}">
-            <div class="form-grid form-grid-4">
+            <div class="form-grid form-grid-2">
                 <div class="form-group"><label class="form-label">Dispozice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.disposition)}" placeholder="4+1"
                            onchange="updateCompField('${comp.id}', 'disposition', this.value)"></div>
                 <div class="form-group"><label class="form-label">Plocha (m²)</label>
                     <input type="text" class="form-input" value="${escAttr(comp.area)}" placeholder="82"
                            onchange="updateCompField('${comp.id}', 'area', this.value)"></div>
+            </div>
+            <div class="form-grid form-grid-3">
                 <div class="form-group"><label class="form-label">Ulice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.street)}" placeholder="Bryksova"
                            onchange="updateCompField('${comp.id}', 'street', this.value)"></div>
+                <div class="form-group"><label class="form-label">Město</label>
+                    <input type="text" class="form-input" value="${escAttr(comp.city)}" placeholder="Praha"
+                           onchange="updateCompField('${comp.id}', 'city', this.value)"></div>
                 <div class="form-group"><label class="form-label">Městská část</label>
                     <input type="text" class="form-input" value="${escAttr(comp.district)}" placeholder="Černý Most"
                            onchange="updateCompField('${comp.id}', 'district', this.value)"></div>
@@ -182,7 +186,7 @@ function renderCompCard(comp) {
                           onchange="updateCompField('${comp.id}', 'descriptionText', this.value)">${escHtml(comp.descriptionText)}</textarea></div>
             <div class="form-group"><label class="form-label">Důležité body (zvýraznění)</label>
                 <div class="badge-list">
-                    ${comp.highlights.map((h, i) => `<span class="badge">${escHtml(h)}<button onclick="removeHighlight('${comp.id}', ${i})">×</button></span>`).join('')}
+                    ${comp.highlights.map((h, i) => `<span class="badge">${escHtml(h)}<button onclick="removeHighlight('${comp.id}', i)">×</button></span>`).join('')}
                 </div>
                 <div class="highlight-input-row">
                     <input type="text" class="form-input" id="hlInput-${comp.id}"

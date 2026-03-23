@@ -5,7 +5,6 @@ import cz.stabuilder.service.DocxExportService;
 import cz.stabuilder.service.PdfExportService;
 import cz.stabuilder.service.PhotoService;
 import cz.stabuilder.service.ProjectService;
-import cz.stabuilder.service.StaService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,18 +23,15 @@ import java.util.Map;
 @RequestMapping("/api")
 public class StaController {
 
-    private final StaService staService;
     private final DocxExportService docxExportService;
     private final PdfExportService pdfExportService;
     private final PhotoService photoService;
     private final ProjectService projectService;
 
-    public StaController(StaService staService,
-                         DocxExportService docxExportService,
+    public StaController(DocxExportService docxExportService,
                          PdfExportService pdfExportService,
                          PhotoService photoService,
                          ProjectService projectService) {
-        this.staService = staService;
         this.docxExportService = docxExportService;
         this.pdfExportService = pdfExportService;
         this.photoService = photoService;
@@ -128,33 +124,14 @@ public class StaController {
 
     // ==================== EXPORT DOCX ====================
 
-    /** DOCX export z klientského stavu (POST). */
     @PostMapping("/export/docx")
-    public ResponseEntity<byte[]> exportDocxPost(@RequestBody StaProject project) throws IOException {
+    public ResponseEntity<byte[]> exportDocxPost(@RequestBody StaProject project) throws Exception {
         byte[] docx = docxExportService.generateDocx(project);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + exportFilename(project, "docx") + "\"")
                 .contentType(MediaType.parseMediaType(
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
                 .body(docx);
-    }
-
-    @GetMapping("/export/json")
-    public StaProject exportJson() {
-        return staService.getProject();
-    }
-
-    // ==================== LEGACY ====================
-
-    @GetMapping("/project")
-    public StaProject getProject() {
-        return staService.getProject();
-    }
-
-    @PostMapping("/project/reset")
-    public Map<String, String> resetProject() {
-        staService.resetProject();
-        return Map.of("status", "ok");
     }
 
     // === Helper ===

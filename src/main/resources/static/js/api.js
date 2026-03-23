@@ -1,21 +1,16 @@
 // ==================== API ====================
 
 const API = {
-    // Pomocná funkce: Překládá volný JS stav do striktní podoby, kterou očekává Java backend
     mapStateToBackend(frontendState) {
-        // Hluboká kopie, abychom nezničili živá data v prohlížeči
         const data = JSON.parse(JSON.stringify(frontendState));
 
-        // 1. Předmět prodeje
         if (data.subject) {
             data.subject.areaSqm = parseInt(String(data.subject.area || '0').replace(/\D/g, '')) || 0;
             delete data.subject.area;
         }
 
-        // 2. Srovnatelné nemovitosti
         if (data.comparables) {
             data.comparables = data.comparables.map(c => {
-                // Java vyžaduje Long (číslo). Pokud máme stringové ID, nahradíme ho číslem.
                 if (typeof c.id === 'string') {
                     c.id = Date.now() + Math.floor(Math.random() * 10000);
                 }
@@ -27,13 +22,10 @@ const API = {
             });
         }
 
-        // 3. Cenové doporučení
         if (data.pricing) {
-            // Java očekává plain String oddělený \n, JS občas posílá Array
             data.pricing.positives = Array.isArray(data.pricing.positives) ? data.pricing.positives.join('\n') : (data.pricing.positives || '');
             data.pricing.negatives = Array.isArray(data.pricing.negatives) ? data.pricing.negatives.join('\n') : (data.pricing.negatives || '');
 
-            // Vyčištění cen od mezer a jiných znaků
             data.pricing.priceFrom = parseInt(String(data.pricing.priceFrom || '0').replace(/\D/g, '')) || 0;
             data.pricing.priceTo = parseInt(String(data.pricing.priceTo || '0').replace(/\D/g, '')) || 0;
             data.pricing.startPrice = parseInt(String(data.pricing.startPrice || '0').replace(/\D/g, '')) || 0;
@@ -42,18 +34,19 @@ const API = {
         return data;
     },
 
-    // Opačná funkce: Převádí Java objekty zpět pro potřeby našeho UI
     mapBackendToState(backendData) {
         const data = JSON.parse(JSON.stringify(backendData));
 
         if (data.subject) {
-            data.subject.area = data.subject.areaSqm || '';
+            // Oprava: Bezpečné přetypování na String, aby vstupní políčka nezlobila
+            data.subject.area = String(data.subject.areaSqm || '');
         }
 
         if (data.comparables) {
             data.comparables = data.comparables.map(c => {
-                c.area = c.areaSqm || '';
-                c.price = c.priceKc || '';
+                // Oprava: Bezpečné přetypování na String
+                c.area = String(c.areaSqm || '');
+                c.price = String(c.priceKc || '');
                 return c;
             });
         }

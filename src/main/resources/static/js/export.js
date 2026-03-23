@@ -88,18 +88,19 @@ function generateTextPreview() {
 
     t += `=== CENOVÉ DOPORUČENÍ ===\n`;
 
-    // Ochrana před chybou při spojování pole, pokud backend vrátí null nebo prostý string
     const pos = Array.isArray(state.pricing.positives) ? state.pricing.positives : [];
     const neg = Array.isArray(state.pricing.negatives) ? state.pricing.negatives : [];
 
     if (pos.length) t += `Klady: ${pos.join(', ')}\n`;
     if (neg.length) t += `Zápory: ${neg.join(', ')}\n`;
     if (state.pricing.recommendation) t += `Doporučení: ${state.pricing.recommendation}\n`;
+
+    // Opravený regex na /\D/g
     if (state.pricing.priceFrom && state.pricing.priceTo) {
-        t += `Rozmezí: ${formatPrice(parseInt(String(state.pricing.priceFrom).replace(/\\D/g, '')))} – ${formatPrice(parseInt(String(state.pricing.priceTo).replace(/\\D/g, '')))}\n`;
+        t += `Rozmezí: ${formatPrice(parseInt(String(state.pricing.priceFrom).replace(/\D/g, '')))} – ${formatPrice(parseInt(String(state.pricing.priceTo).replace(/\D/g, '')))}\n`;
     }
     if (state.pricing.startPrice) {
-        t += `Počáteční cena: ${formatPrice(parseInt(String(state.pricing.startPrice).replace(/\\D/g, '')))}\n`;
+        t += `Počáteční cena: ${formatPrice(parseInt(String(state.pricing.startPrice).replace(/\D/g, '')))}\n`;
     }
     return t;
 }
