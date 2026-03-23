@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STA Builder — Srovnávací tržní analýza</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <div>
+        <h1>STA Builder</h1>
+        <p>Srovnávací tržní analýza — rychle a přehledně</p>
+    </div>
+    <div class="header-actions">
+        <button class="btn btn-ghost btn-small" onclick="saveProject()">💾 Uložit</button>
+        <button class="btn btn-danger btn-small" onclick="resetAll()">Reset</button>
+    </div>
+</div>
+
+<!-- Project Bar -->
+<div class="project-bar">
+    <label class="form-label" style="margin:0; line-height:2">Projekt:</label>
+    <input type="text" id="projectName" class="form-input" style="width:200px;padding:6px 12px;font-size:13px"
+           placeholder="Název projektu..." onchange="state.projectName = this.value">
+    <select id="projectSelect" class="form-input" style="padding:6px 12px;font-size:13px" onchange="loadSelectedProject()">
+        <option value="">— Načíst projekt —</option>
+    </select>
+    <button class="btn btn-ghost btn-small" onclick="refreshProjectList()">🔄</button>
+    <button class="btn btn-danger btn-small" onclick="deleteSelectedProject()">🗑️</button>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="subject">🏠 Předmět</button>
+    <button class="tab-btn" data-tab="comparables">📊 Srovnání <span class="tab-badge" id="compCount">0</span></button>
+    <button class="tab-btn" data-tab="table">📋 Tabulka</button>
+    <button class="tab-btn" data-tab="pricing">💰 Cena</button>
+    <button class="tab-btn" data-tab="export">📄 Export</button>
+</div>
+
+<!-- Content Area -->
+<div class="content">
+
+    <!-- SUBJECT TAB -->
+    <div class="tab-content active" id="tab-subject">
+        <h2 class="section-title">Předmět prodeje</h2>
+        <div class="form-grid form-grid-2" style="margin-bottom:12px">
+            <div class="form-group">
+                <label class="form-label">Datum</label>
+                <input type="date" class="form-input" id="subjectDate" onchange="state.subject.date = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Klient</label>
+                <input type="text" class="form-input" id="subjectClient" placeholder="Jméno klienta"
+                       onchange="state.subject.clientName = this.value">
+            </div>
+        </div>
+        <div class="form-grid form-grid-4" style="margin-bottom:12px">
+            <div class="form-group">
+                <label class="form-label">Dispozice</label>
+                <input type="text" class="form-input" id="subjectDisposition" placeholder="4+1"
+                       onchange="state.subject.disposition = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Vlastnictví</label>
+                <select class="form-input form-select" id="subjectOwnership" onchange="state.subject.ownership = this.value">
+                    <option value="OV">OV</option>
+                    <option value="SV">SV</option>
+                    <option value="Družstevní">Družstevní</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Plocha (m²)</label>
+                <input type="text" class="form-input" id="subjectArea" placeholder="82"
+                       onchange="state.subject.area = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Příslušenství</label>
+                <input type="text" class="form-input" id="subjectExtras" placeholder="lodžie 5 m² + sklep 4 m²"
+                       onchange="state.subject.extras = this.value">
+            </div>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">Adresa</label>
+            <input type="text" class="form-input" id="subjectAddress" placeholder="Bryksova 956/3, Černý Most, Praha 9"
+                   onchange="state.subject.address = this.value">
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+            <label class="form-label">Popis nemovitosti</label>
+            <textarea class="form-input form-textarea" id="subjectDescription" rows="6"
+                      placeholder="Popište nemovitost..."
+                      onchange="state.subject.description = this.value"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Pracovní fotky</label>
+            <div class="photo-grid" id="subjectPhotos"></div>
+        </div>
+    </div>
+
+    <!-- COMPARABLES TAB -->
+    <div class="tab-content" id="tab-comparables">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h2 class="section-title" style="margin:0">Srovnatelné nemovitosti</h2>
+            <button class="btn btn-primary" onclick="addComparable()">+ Přidat nemovitost</button>
+        </div>
+        <div id="comparablesList"></div>
+    </div>
+
+    <!-- TABLE TAB -->
+    <div class="tab-content" id="tab-table">
+        <h2 class="section-title">Srovnávací tabulka</h2>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+            <div style="overflow-x:auto" id="comparisonTable"></div>
+        </div>
+    </div>
+
+    <!-- PRICING TAB -->
+    <div class="tab-content" id="tab-pricing">
+        <h2 class="section-title">Cenové doporučení</h2>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Kladné stránky nemovitosti</label>
+            <textarea class="form-input form-textarea" id="pricingPositives" rows="4"
+                      placeholder="Každý řádek = jedna položka"
+                      onchange="state.pricing.positives = this.value.split('\n').filter(s=>s.trim())"></textarea>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Záporné stránky nemovitosti</label>
+            <textarea class="form-input form-textarea" id="pricingNegatives" rows="3"
+                      placeholder="Každý řádek = jedna položka"
+                      onchange="state.pricing.negatives = this.value.split('\n').filter(s=>s.trim())"></textarea>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+            <label class="form-label">Doporučení</label>
+            <textarea class="form-input form-textarea" id="pricingRec" rows="2"
+                      placeholder="kvalitní příprava na prodej..."
+                      onchange="state.pricing.recommendation = this.value"></textarea>
+        </div>
+        <div class="form-grid form-grid-3">
+            <div class="form-group">
+                <label class="form-label">Cenové rozmezí OD (Kč)</label>
+                <input type="text" class="form-input" id="pricingFrom" placeholder="8500000"
+                       onchange="state.pricing.priceFrom = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cenové rozmezí DO (Kč)</label>
+                <input type="text" class="form-input" id="pricingTo" placeholder="8800000"
+                       onchange="state.pricing.priceTo = this.value">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Počáteční cena (Kč)</label>
+                <input type="text" class="form-input" id="pricingStart" placeholder="8990000"
+                       onchange="state.pricing.startPrice = this.value">
+            </div>
+        </div>
+    </div>
+
+    <!-- EXPORT TAB -->
+    <div class="tab-content" id="tab-export">
+        <h2 class="section-title">Export a generování dokumentu</h2>
+        <div class="export-actions">
+            <button class="btn btn-accent" onclick="exportPdf()">📄 Stáhnout PDF</button>
+            <button class="btn btn-ghost" onclick="previewPdf()">👁 Náhled PDF</button>
+            <button class="btn btn-ghost" onclick="toggleTextPreview()">📝 Textový náhled</button>
+        </div>
+        <div id="textPreview" style="display:none">
+            <pre class="text-preview" id="textPreviewContent"></pre>
+        </div>
+        <div class="export-stats" id="exportStats"></div>
+    </div>
+</div>
+
+<!-- Notification container -->
+<div id="notifications"></div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>
