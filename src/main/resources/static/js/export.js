@@ -12,11 +12,7 @@ function updateExportStats() {
 
 async function exportDocx() {
     try {
-        const res = await fetch('/api/export/docx', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(state)
-        });
+        const res = await API.exportDocx(state);
         if (!res.ok) throw new Error('Export selhal');
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -91,20 +87,25 @@ function generateTextPreview() {
     }
 
     t += `=== CENOVÉ DOPORUČENÍ ===\n`;
-    if (state.pricing.positives?.length) t += `Klady: ${state.pricing.positives.join(', ')}\n`;
-    if (state.pricing.negatives?.length) t += `Zápory: ${state.pricing.negatives.join(', ')}\n`;
+
+    // Ochrana před chybou při spojování pole, pokud backend vrátí null nebo prostý string
+    const pos = Array.isArray(state.pricing.positives) ? state.pricing.positives : [];
+    const neg = Array.isArray(state.pricing.negatives) ? state.pricing.negatives : [];
+
+    if (pos.length) t += `Klady: ${pos.join(', ')}\n`;
+    if (neg.length) t += `Zápory: ${neg.join(', ')}\n`;
     if (state.pricing.recommendation) t += `Doporučení: ${state.pricing.recommendation}\n`;
     if (state.pricing.priceFrom && state.pricing.priceTo) {
-        t += `Rozmezí: ${formatPrice(parseInt(state.pricing.priceFrom))} – ${formatPrice(parseInt(state.pricing.priceTo))}\n`;
+        t += `Rozmezí: ${formatPrice(parseInt(String(state.pricing.priceFrom).replace(/\\D/g, '')))} – ${formatPrice(parseInt(String(state.pricing.priceTo).replace(/\\D/g, '')))}\n`;
     }
     if (state.pricing.startPrice) {
-        t += `Počáteční cena: ${formatPrice(parseInt(state.pricing.startPrice))}\n`;
+        t += `Počáteční cena: ${formatPrice(parseInt(String(state.pricing.startPrice).replace(/\\D/g, '')))}\n`;
     }
     return t;
 }
 
 function compToText(c, isSold) {
-    const p = parseInt((c.price || '0').replace(/\D/g, ''));
+    const p = parseInt((c.price || '0').toString().replace(/\D/g, ''));
     let t = `Byt ${c.disposition}, ${c.area} m², ul. ${c.street}, ${c.district}\n`;
     t += isSold ? `Prodáno za: ${formatPrice(p)} (${c.soldDate}, ${c.soldDuration})\n` : `Cena: ${formatPrice(p)}\n`;
     if (c.descriptionText) t += `Popis: ${c.descriptionText.substring(0, 200)}...\n`;
