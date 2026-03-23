@@ -14,9 +14,12 @@ public class PhotoService {
     private static final String UPLOAD_DIR = "data/photos";
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+    private Path uploadPath;
+
     @PostConstruct
     public void init() throws IOException {
-        Files.createDirectories(Path.of(UPLOAD_DIR));
+        uploadPath = Path.of(UPLOAD_DIR).toAbsolutePath().normalize();
+        Files.createDirectories(uploadPath);
     }
 
     /**
@@ -37,38 +40,54 @@ public class PhotoService {
         }
 
         String uniqueName = UUID.randomUUID().toString().substring(0, 12) + "." + extension;
-        Path targetPath = Path.of(UPLOAD_DIR, uniqueName);
-        file.transferTo(targetPath);
+        Path targetPath = uploadPath.resolve(uniqueName).normalize();
+
+        // Ochrana proti path traversal
+        if (!targetPath.startsWith(uploadPath)) {
+            throw new IOException("Neplatná cesta k souboru");
+        }
+
+        Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
         return uniqueName;
     }
 
     /**
-     * Získat cestu k fotce.
+     * Získat cestu k fotce (s ochranou proti path traversal).
      */
-    public Path getPhotoPath(String filename) {
-        return Path.of(UPLOAD_DIR, filename);
+    public Path getPhotoPath(String filename) throws IOException {
+        Path path = uploadPath.resolve(filename).normalize();
+        if (!path.startsWith(uploadPath)) {
+            throw new IOException("Neplatná cesta k souboru");
+        }
+        return path;
     }
 
     /**
      * Ověřit existenci fotky.
      */
     public boolean exists(String filename) {
-        return Files.exists(Path.of(UPLOAD_DIR, filename));
+        try {
+            Path path = getPhotoPath(filename);
+            return Files.exists(path);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /**
      * Smazat fotku.
      */
     public boolean deletePhoto(String filename) throws IOException {
-        return Files.deleteIfExists(Path.of(UPLOAD_DIR, filename));
+        Path path = getPhotoPath(filename);
+        return Files.deleteIfExists(path);
     }
 
     /**
-     * Získat byte[] fotky pro PDF export.
+     * Získat byte[] fotky pro PDF/DOCX export.
      */
     public byte[] getPhotoBytes(String filename) throws IOException {
-        Path path = Path.of(UPLOAD_DIR, filename);
+        Path path = getPhotoPath(filename);
         if (!Files.exists(path)) {
             throw new IOException("Fotka nenalezena: " + filename);
         }

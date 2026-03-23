@@ -1,4 +1,4 @@
-FOLDER DUMP - 2026-03-23 11:02:25.850997
+FOLDER DUMP - 2026-03-23 11:20:37.068155
 ================================================================================
 
 DIRECTORY TREE
@@ -2987,11 +2987,77 @@ FILE: src/main/resources/static/js/api.js
 // ==================== API ====================
 
 const API = {
+    // Pomocná funkce: Překládá volný JS stav do striktní podoby, kterou očekává Java backend
+    mapStateToBackend(frontendState) {
+        // Hluboká kopie, abychom nezničili živá data v prohlížeči
+        const data = JSON.parse(JSON.stringify(frontendState));
+
+        // 1. Předmět prodeje
+        if (data.subject) {
+            data.subject.areaSqm = parseInt(String(data.subject.area || '0').replace(/\D/g, '')) || 0;
+            delete data.subject.area;
+        }
+
+        // 2. Srovnatelné nemovitosti
+        if (data.comparables) {
+            data.comparables = data.comparables.map(c => {
+                // Java vyžaduje Long (číslo). Pokud máme stringové ID, nahradíme ho číslem.
+                if (typeof c.id === 'string') {
+                    c.id = Date.now() + Math.floor(Math.random() * 10000);
+                }
+                c.areaSqm = parseInt(String(c.area || '0').replace(/\D/g, '')) || 0;
+                c.priceKc = parseInt(String(c.price || '0').replace(/\D/g, '')) || 0;
+                delete c.area;
+                delete c.price;
+                return c;
+            });
+        }
+
+        // 3. Cenové doporučení
+        if (data.pricing) {
+            // Java očekává plain String oddělený \n, JS občas posílá Array
+            data.pricing.positives = Array.isArray(data.pricing.positives) ? data.pricing.positives.join('\n') : (data.pricing.positives || '');
+            data.pricing.negatives = Array.isArray(data.pricing.negatives) ? data.pricing.negatives.join('\n') : (data.pricing.negatives || '');
+
+            // Vyčištění cen od mezer a jiných znaků
+            data.pricing.priceFrom = parseInt(String(data.pricing.priceFrom || '0').replace(/\D/g, '')) || 0;
+            data.pricing.priceTo = parseInt(String(data.pricing.priceTo || '0').replace(/\D/g, '')) || 0;
+            data.pricing.startPrice = parseInt(String(data.pricing.startPrice || '0').replace(/\D/g, '')) || 0;
+        }
+
+        return data;
+    },
+
+    // Opačná funkce: Převádí Java objekty zpět pro potřeby našeho UI
+    mapBackendToState(backendData) {
+        const data = JSON.parse(JSON.stringify(backendData));
+
+        if (data.subject) {
+            data.subject.area = data.subject.areaSqm || '';
+        }
+
+        if (data.comparables) {
+            data.comparables = data.comparables.map(c => {
+                c.area = c.areaSqm || '';
+                c.price = c.priceKc || '';
+                return c;
+            });
+        }
+
+        if (data.pricing) {
+            data.pricing.positives = data.pricing.positives ? data.pricing.positives.split('\n') : [];
+            data.pricing.negatives = data.pricing.negatives ? data.pricing.negatives.split('\n') : [];
+        }
+
+        return data;
+    },
+
     async saveProject(data) {
+        const mappedData = this.mapStateToBackend(data);
         const res = await fetch('/api/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(mappedData)
         });
         return res.json();
     },
@@ -2999,7 +3065,8 @@ const API = {
     async loadProject(name) {
         const res = await fetch(`/api/projects/${encodeURIComponent(name)}`);
         if (!res.ok) throw new Error('Projekt nenalezen');
-        return res.json();
+        const data = await res.json();
+        return this.mapBackendToState(data);
     },
 
     async listProjects() {
@@ -3024,11 +3091,21 @@ const API = {
     },
 
     async exportPdf(data, preview = false) {
+        const mappedData = this.mapStateToBackend(data);
         const endpoint = preview ? '/api/export/pdf/preview' : '/api/export/pdf';
         return fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            body: JSON.stringify(mappedData)
+        });
+    },
+
+    async exportDocx(data) {
+        const mappedData = this.mapStateToBackend(data);
+        return fetch('/api/export/docx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(mappedData)
         });
     }
 };
@@ -3207,6 +3284,31 @@ function toggleComp(id) {
     }
 }
 
+// ==================== UPDATE FIELD (BEZ ZTRÁTY FOCUSU) ====================
+
+function updateCompField(compId, field, value) {
+    const comp = getComp(compId);
+    comp[field] = value;
+
+    // Dynamicky upravíme pouze hlavičku, abychom nepřekreslovali celý DOM a neztratili Tab focus
+    const titleEl = document.getElementById('title-' + compId);
+    const subtitleEl = document.getElementById('subtitle-' + compId);
+
+    if (titleEl && subtitleEl) {
+        const headerInfo = [comp.street, comp.disposition, comp.area ? comp.area + ' m²' : '']
+            .filter(Boolean).join(' • ') || 'Nová nemovitost';
+
+        const priceNum = parseInt((comp.price || '0').replace(/\D/g, ''));
+        const areaNum = parseFloat(comp.area || '0');
+        const pricePerM2 = areaNum > 0 ? Math.round(priceNum / areaNum) : 0;
+        const priceInfo = priceNum > 0
+            ? formatPrice(priceNum) + (pricePerM2 > 0 ? ` (${formatPrice(pricePerM2)}/m²)` : '') : '';
+
+        titleEl.textContent = headerInfo;
+        subtitleEl.textContent = priceInfo;
+    }
+}
+
 // ==================== HIGHLIGHTS ====================
 
 function addHighlight(compId) {
@@ -3262,8 +3364,8 @@ function renderCompCard(comp) {
                 <span class="comp-badge ${isSold ? 'comp-badge-sold' : 'comp-badge-offer'}">
                     ${isSold ? 'Prodáno' : 'Nabídka'}
                 </span>
-                <span class="comp-title">${escHtml(headerInfo)}</span>
-                <span class="comp-subtitle">${priceInfo}</span>
+                <span class="comp-title" id="title-${comp.id}">${escHtml(headerInfo)}</span>
+                <span class="comp-subtitle" id="subtitle-${comp.id}">${escHtml(priceInfo)}</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
                 <button class="btn btn-danger btn-small" onclick="event.stopPropagation();removeComparable('${comp.id}')">Smazat</button>
@@ -3274,30 +3376,30 @@ function renderCompCard(comp) {
             <div class="form-grid form-grid-4">
                 <div class="form-group"><label class="form-label">Dispozice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.disposition)}" placeholder="4+1"
-                           onchange="getComp('${comp.id}').disposition=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'disposition', this.value)"></div>
                 <div class="form-group"><label class="form-label">Plocha (m²)</label>
                     <input type="text" class="form-input" value="${escAttr(comp.area)}" placeholder="82"
-                           onchange="getComp('${comp.id}').area=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'area', this.value)"></div>
                 <div class="form-group"><label class="form-label">Ulice</label>
                     <input type="text" class="form-input" value="${escAttr(comp.street)}" placeholder="Bryksova"
-                           onchange="getComp('${comp.id}').street=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'street', this.value)"></div>
                 <div class="form-group"><label class="form-label">Městská část</label>
                     <input type="text" class="form-input" value="${escAttr(comp.district)}" placeholder="Černý Most"
-                           onchange="getComp('${comp.id}').district=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'district', this.value)"></div>
             </div>
             <div class="form-grid form-grid-4">
                 <div class="form-group"><label class="form-label">Cena (Kč)</label>
                     <input type="text" class="form-input" value="${escAttr(comp.price)}" placeholder="8500000"
-                           onchange="getComp('${comp.id}').price=this.value;renderComparables()"></div>
+                           onchange="updateCompField('${comp.id}', 'price', this.value)"></div>
                 <div class="form-group"><label class="form-label">Patro</label>
                     <input type="text" class="form-input" value="${escAttr(comp.floor)}" placeholder="6. NP"
-                           onchange="getComp('${comp.id}').floor=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'floor', this.value)"></div>
                 <div class="form-group"><label class="form-label">Stav bytu</label>
                     <input type="text" class="form-input" value="${escAttr(comp.condition)}" placeholder="Po rekonstrukci"
-                           onchange="getComp('${comp.id}').condition=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'condition', this.value)"></div>
                 <div class="form-group"><label class="form-label">Příslušenství</label>
                     <input type="text" class="form-input" value="${escAttr(comp.extras)}" placeholder="lodžie, sklep"
-                           onchange="getComp('${comp.id}').extras=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'extras', this.value)"></div>
             </div>
             <div style="display:flex;gap:8px">
                 <button class="btn-category ${!isSold ? 'active-offer' : ''}"
@@ -3309,16 +3411,16 @@ function renderCompCard(comp) {
             <div class="form-grid form-grid-2">
                 <div class="form-group"><label class="form-label">Datum prodeje</label>
                     <input type="text" class="form-input" value="${escAttr(comp.soldDate)}" placeholder="1/2025"
-                           onchange="getComp('${comp.id}').soldDate=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'soldDate', this.value)"></div>
                 <div class="form-group"><label class="form-label">Doba prodeje</label>
                     <input type="text" class="form-input" value="${escAttr(comp.soldDuration)}" placeholder="2 měsíce"
-                           onchange="getComp('${comp.id}').soldDuration=this.value"></div>
+                           onchange="updateCompField('${comp.id}', 'soldDuration', this.value)"></div>
             </div>` : ''}
             <div class="form-group"><label class="form-label">Fotografie (max 6)</label>
                 <div class="photo-grid" id="photos-${comp.id}"></div></div>
             <div class="form-group"><label class="form-label">Popis z inzerátu</label>
                 <textarea class="form-input form-textarea" rows="5" placeholder="Vložte popis z inzerátu..."
-                          onchange="getComp('${comp.id}').descriptionText=this.value">${escHtml(comp.descriptionText)}</textarea></div>
+                          onchange="updateCompField('${comp.id}', 'descriptionText', this.value)">${escHtml(comp.descriptionText)}</textarea></div>
             <div class="form-group"><label class="form-label">Důležité body (zvýraznění)</label>
                 <div class="badge-list">
                     ${comp.highlights.map((h, i) => `<span class="badge">${escHtml(h)}<button onclick="removeHighlight('${comp.id}', ${i})">×</button></span>`).join('')}
@@ -3331,7 +3433,7 @@ function renderCompCard(comp) {
                 </div></div>
             <div class="form-group"><label class="form-label">Zpětná vazba od makléře</label>
                 <textarea class="form-input form-textarea" rows="3" placeholder="Volitelné – zpětná vazba od makléře..."
-                          onchange="getComp('${comp.id}').brokerFeedback=this.value">${escHtml(comp.brokerFeedback)}</textarea></div>
+                          onchange="updateCompField('${comp.id}', 'brokerFeedback', this.value)">${escHtml(comp.brokerFeedback)}</textarea></div>
         </div>
     </div>`;
 }
@@ -3402,11 +3504,7 @@ function updateExportStats() {
 
 async function exportDocx() {
     try {
-        const res = await fetch('/api/export/docx', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(state)
-        });
+        const res = await API.exportDocx(state);
         if (!res.ok) throw new Error('Export selhal');
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -3481,20 +3579,25 @@ function generateTextPreview() {
     }
 
     t += `=== CENOVÉ DOPORUČENÍ ===\n`;
-    if (state.pricing.positives?.length) t += `Klady: ${state.pricing.positives.join(', ')}\n`;
-    if (state.pricing.negatives?.length) t += `Zápory: ${state.pricing.negatives.join(', ')}\n`;
+
+    // Ochrana před chybou při spojování pole, pokud backend vrátí null nebo prostý string
+    const pos = Array.isArray(state.pricing.positives) ? state.pricing.positives : [];
+    const neg = Array.isArray(state.pricing.negatives) ? state.pricing.negatives : [];
+
+    if (pos.length) t += `Klady: ${pos.join(', ')}\n`;
+    if (neg.length) t += `Zápory: ${neg.join(', ')}\n`;
     if (state.pricing.recommendation) t += `Doporučení: ${state.pricing.recommendation}\n`;
     if (state.pricing.priceFrom && state.pricing.priceTo) {
-        t += `Rozmezí: ${formatPrice(parseInt(state.pricing.priceFrom))} – ${formatPrice(parseInt(state.pricing.priceTo))}\n`;
+        t += `Rozmezí: ${formatPrice(parseInt(String(state.pricing.priceFrom).replace(/\\D/g, '')))} – ${formatPrice(parseInt(String(state.pricing.priceTo).replace(/\\D/g, '')))}\n`;
     }
     if (state.pricing.startPrice) {
-        t += `Počáteční cena: ${formatPrice(parseInt(state.pricing.startPrice))}\n`;
+        t += `Počáteční cena: ${formatPrice(parseInt(String(state.pricing.startPrice).replace(/\\D/g, '')))}\n`;
     }
     return t;
 }
 
 function compToText(c, isSold) {
-    const p = parseInt((c.price || '0').replace(/\D/g, ''));
+    const p = parseInt((c.price || '0').toString().replace(/\D/g, ''));
     let t = `Byt ${c.disposition}, ${c.area} m², ul. ${c.street}, ${c.district}\n`;
     t += isSold ? `Prodáno za: ${formatPrice(p)} (${c.soldDate}, ${c.soldDuration})\n` : `Cena: ${formatPrice(p)}\n`;
     if (c.descriptionText) t += `Popis: ${c.descriptionText.substring(0, 200)}...\n`;
